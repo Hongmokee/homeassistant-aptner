@@ -6,6 +6,11 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.selector import (
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
+)
 
 from .api import AptnerApiClient, AptnerApiError
 from .const import (
@@ -78,7 +83,15 @@ class AptnerOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input: dict | None = None):
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            return self.async_create_entry(
+                title="",
+                data={
+                    CONF_SCAN_INTERVAL_MINUTES: int(
+                        user_input[CONF_SCAN_INTERVAL_MINUTES]
+                    ),
+                    CONF_PAGE_LIMIT: int(user_input[CONF_PAGE_LIMIT]),
+                },
+            )
 
         return self.async_show_form(
             step_id="init",
@@ -90,11 +103,12 @@ class AptnerOptionsFlow(config_entries.OptionsFlow):
                             CONF_SCAN_INTERVAL_MINUTES,
                             DEFAULT_SCAN_INTERVAL_MINUTES,
                         ),
-                    ): vol.All(
-                        vol.Coerce(int),
-                        vol.Range(
+                    ): NumberSelector(
+                        NumberSelectorConfig(
                             min=MIN_SCAN_INTERVAL_MINUTES,
                             max=MAX_SCAN_INTERVAL_MINUTES,
+                            step=1,
+                            mode=NumberSelectorMode.BOX,
                         ),
                     ),
                     vol.Required(
@@ -103,9 +117,13 @@ class AptnerOptionsFlow(config_entries.OptionsFlow):
                             CONF_PAGE_LIMIT,
                             DEFAULT_PAGE_LIMIT,
                         ),
-                    ): vol.All(
-                        vol.Coerce(int),
-                        vol.Range(min=MIN_PAGE_LIMIT, max=MAX_PAGE_LIMIT),
+                    ): NumberSelector(
+                        NumberSelectorConfig(
+                            min=MIN_PAGE_LIMIT,
+                            max=MAX_PAGE_LIMIT,
+                            step=1,
+                            mode=NumberSelectorMode.BOX,
+                        ),
                     ),
                 }
             ),
