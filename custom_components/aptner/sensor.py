@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import html
 import re
 from collections.abc import Callable
@@ -159,6 +161,8 @@ APTNER_IMAGE_BASE_URL = "https://d3fixtu11mscj5.cloudfront.net"
 HTML_BREAK_PATTERN = re.compile(r"(?i)<\s*(br|/p|/div|/li)\b[^>]*>")
 HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
 HTML_BLOCK_PATTERN = re.compile(r"(?is)<\s*(script|style)\b.*?<\s*/\s*\1\s*>")
+HTML_HEAD_PATTERN = re.compile(r"(?is)<\s*head\b.*?<\s*/\s*head\s*>")
+HTML_BODY_PATTERN = re.compile(r"(?is)<\s*body\b[^>]*>(.*?)<\s*/\s*body\s*>")
 HTML_IMAGE_SRC_PATTERN = re.compile(r"(?is)<img\b[^>]*\bsrc\s*=\s*[\"']?([^\"'\s>]+)")
 IMAGE_URL_PATTERN = re.compile(
     r"(?i)https?://[^\s\"'<>]+?\.(?:png|jpe?g|gif|webp)(?:\?[^\s\"'<>]*)?"
@@ -167,6 +171,7 @@ IMAGE_RELATIVE_PATH_PATTERN = re.compile(
     r"(?i)(?:^|[\"'(\s])(/?aptner/board/[^\s\"'<>)]*?\.(?:png|jpe?g|gif|webp)(?:\?[^\s\"'<>)]*)?)"
 )
 IMAGE_FIELD_HINTS = ("image", "img", "thumbnail", "photo", "picture")
+BASE64_TEXT_PATTERN = re.compile(r"^[A-Za-z0-9+/]+={0,2}$")
 BOARD_CONTENT_FIELDS = (
     "content",
     "contents",
@@ -396,12 +401,42 @@ def _latest_board_article_id(payload: Any) -> Any:
 
 
 def _html_to_text(value: str) -> str:
-    cleaned = HTML_BLOCK_PATTERN.sub("", value)
+    body_match = HTML_BODY_PATTERN.search(value)
+    cleaned = body_match.group(1) if body_match else value
+    cleaned = HTML_HEAD_PATTERN.sub("", cleaned)
+    cleaned = HTML_BLOCK_PATTERN.sub("", cleaned)
     cleaned = HTML_BREAK_PATTERN.sub("\n", cleaned)
     cleaned = HTML_TAG_PATTERN.sub("", cleaned)
     cleaned = html.unescape(cleaned)
     lines = [" ".join(line.split()) for line in cleaned.splitlines()]
     return "\n".join(line for line in lines if line)
+
+
+def _decode_base64_text(value: str) -> str | None:
+    compact = "".join(value.split())
+    if len(compact) < 16 or len(compact) % 4 != 0:
+        return None
+    if BASE64_TEXT_PATTERN.fullmatch(compact) is None:
+        return None
+    try:
+        decoded = base64.b64decode(compact, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    for encoding in ("utf-8", "euc-kr", "cp949"):
+        try:
+            text = decoded.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        if "<" in text and ">" in text:
+            return text
+        if any(char.isalpha() for char in text):
+            return text
+    return None
+
+
+def _decode_possible_base64_html(value: str) -> str:
+    decoded = _decode_base64_text(value)
+    return decoded if decoded is not None else value
 
 
 def _short_text_state(value: str | None) -> str | None:
@@ -427,7 +462,7 @@ def _latest_board_content(payload: Any) -> str | None:
     value = _latest_board_string_value(payload, *BOARD_CONTENT_FIELDS)
     if value is None:
         return None
-    return _html_to_text(value)
+    return _html_to_text(_decode_possible_base64_html(value))
 
 
 def _normalize_board_image_url(value: str) -> str | None:
@@ -455,6 +490,7 @@ def _collect_board_image_urls(value: Any, urls: list[str], *, key_hint: str = ""
     if len(urls) >= MAX_BOARD_IMAGE_URLS:
         return
     if isinstance(value, str):
+        value = _decode_possible_base64_html(value)
         for match in HTML_IMAGE_SRC_PATTERN.finditer(value):
             _add_image_url(urls, match.group(1))
             if len(urls) >= MAX_BOARD_IMAGE_URLS:
