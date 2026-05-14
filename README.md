@@ -27,7 +27,11 @@
 ### 2. 공지 / 커뮤니티 / 민원
 
 - `notice_count`, `latest_notice_title`, `latest_notice_date`
+- `latest_notice_content`: 최신 공지 본문 요약, 전체 본문과 이미지 URL은 속성으로 제공
+- `latest_notice_image`: 최신 공지의 첫 번째 이미지 URL, 전체 이미지 URL은 속성으로 제공
 - `community_count`, `latest_community_title`
+- `latest_community_content`: 최신 커뮤니티 글 본문 요약, 전체 본문과 이미지 URL은 속성으로 제공
+- `latest_community_image`: 최신 커뮤니티 글의 첫 번째 이미지 URL, 전체 이미지 URL은 속성으로 제공
 - `complaint_count`, `latest_complaint_title`, `latest_complaint_status`
 - `defect_count`
 - `region_count`, `latest_region_title`

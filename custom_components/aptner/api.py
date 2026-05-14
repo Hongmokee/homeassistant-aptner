@@ -7,6 +7,7 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
+from urllib.parse import quote
 
 import aiohttp
 
@@ -100,8 +101,8 @@ class AptnerApiClient:
 
         request_plan: list[tuple[str, asyncio.Task[Any]]] = [
             ("usage_services", self._schedule_optional(lambda: self._fetch_usage_services(kapt_code), kapt_code)),
-            ("board_notice", asyncio.create_task(self._safe_fetch(self._fetch_board_articles("notice")))),
-            ("board_community", asyncio.create_task(self._safe_fetch(self._fetch_board_articles("comm")))),
+            ("board_notice", asyncio.create_task(self._safe_fetch(self._fetch_board_articles_with_latest("notice")))),
+            ("board_community", asyncio.create_task(self._safe_fetch(self._fetch_board_articles_with_latest("comm")))),
             ("board_complaint", asyncio.create_task(self._safe_fetch(self._fetch_board_articles("complaint")))),
             ("board_defect", asyncio.create_task(self._safe_fetch(self._safe_optional_feature(self._fetch_board_articles("as"))))),
             ("board_region", asyncio.create_task(self._safe_fetch(self._fetch_board_articles("region")))),
@@ -310,6 +311,54 @@ class AptnerApiClient:
             f"/board/{board_group}/articles",
             params={"pg": 1, "limit": self._page_limit},
         )
+
+    async def _fetch_board_articles_with_latest(self, board_group: str) -> Any:
+        listing = await self._fetch_board_articles(board_group)
+        latest = None
+        article_id = self._latest_board_article_id(listing)
+        if article_id is not None:
+            try:
+                latest = await self._fetch_board_article_detail(board_group, article_id)
+            except (AptnerApiError, aiohttp.ClientError, OSError):
+                latest = None
+        return {
+            "list": listing,
+            "latest": latest,
+        }
+
+    async def _fetch_board_article_detail(self, board_group: str, article_id: str) -> Any:
+        article_id_path = quote(article_id, safe="")
+        paths = (
+            f"/board/{board_group}/article/{article_id_path}",
+            f"/board/{board_group}/articles/{article_id_path}",
+            f"/board/article/{article_id_path}",
+        )
+        last_error: AptnerApiError | None = None
+        for path in paths:
+            try:
+                payload = await self._request_v2("GET", path)
+            except AptnerApiError as err:
+                last_error = err
+                if str(err).startswith("404:"):
+                    continue
+                raise
+            return self._unwrap_common_response(payload)
+        if last_error is not None:
+            raise last_error
+        raise AptnerApiError("missing board article detail path")
+
+    def _latest_board_article_id(self, payload: Any) -> str | None:
+        if not isinstance(payload, dict):
+            return None
+        articles = payload.get("articleList")
+        if not isinstance(articles, list) or not articles or not isinstance(articles[0], dict):
+            return None
+        for key in ("articleId", "id", "articleNo", "idx"):
+            value = articles[0].get(key)
+            article_id = self._string_or_none(value)
+            if article_id:
+                return article_id
+        return None
 
     async def _fetch_schedule(self, year: int, month: int) -> Any:
         return await self._request_v2(

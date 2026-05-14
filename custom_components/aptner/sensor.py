@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -152,6 +153,17 @@ PARKING_HISTORY_DATETIME_FORMATS = (
     "%Y-%m-%d",
 )
 
+MAX_TEXT_SENSOR_STATE_LENGTH = 255
+MAX_BOARD_IMAGE_URLS = 10
+HTML_BREAK_PATTERN = re.compile(r"(?i)<\s*(br|/p|/div|/li)\b[^>]*>")
+HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
+HTML_BLOCK_PATTERN = re.compile(r"(?is)<\s*(script|style)\b.*?<\s*/\s*\1\s*>")
+HTML_IMAGE_SRC_PATTERN = re.compile(r"(?is)<img\b[^>]*\bsrc=[\"']([^\"']+)[\"']")
+IMAGE_URL_PATTERN = re.compile(
+    r"(?i)https?://[^\s\"'<>]+?\.(?:png|jpe?g|gif|webp)(?:\?[^\s\"'<>]*)?"
+)
+IMAGE_FIELD_HINTS = ("image", "img", "thumbnail", "photo", "picture")
+
 OVERVIEW_KEYS = {
     "apartment",
     "apartment_phone",
@@ -162,8 +174,12 @@ COMMUNITY_KEYS = {
     "notice_count",
     "latest_notice_title",
     "latest_notice_date",
+    "latest_notice_content",
+    "latest_notice_image",
     "community_count",
     "latest_community_title",
+    "latest_community_content",
+    "latest_community_image",
     "complaint_count",
     "latest_complaint_title",
     "latest_complaint_status",
@@ -312,10 +328,188 @@ def _error_text(payload: Any) -> str | None:
 
 
 def _board_articles(payload: Any) -> list[dict[str, Any]]:
-    if not isinstance(payload, dict):
-        return []
-    articles = payload.get("articleList")
+    listing = _board_list_payload(payload)
+    articles = listing.get("articleList")
     return articles if isinstance(articles, list) else []
+
+
+def _board_list_payload(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    listing = payload.get("list")
+    if isinstance(listing, dict):
+        return listing
+    return payload
+
+
+def _unwrap_board_detail_payload(payload: Any) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    for key in ("data", "article", "articleDetail", "boardArticle", "detail"):
+        nested = payload.get(key)
+        if isinstance(nested, dict):
+            return _unwrap_board_detail_payload(nested) or nested
+    return payload
+
+
+def _latest_board_detail_payload(payload: Any) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    latest = payload.get("latest")
+    if isinstance(latest, dict):
+        detail = _unwrap_board_detail_payload(latest)
+        if detail is not None:
+            return detail
+    articles = _board_articles(payload)
+    if articles and isinstance(articles[0], dict):
+        return articles[0]
+    return None
+
+
+def _latest_board_article_id(payload: Any) -> Any:
+    detail = _latest_board_detail_payload(payload)
+    if detail is None:
+        return None
+    for key in ("articleId", "id", "articleNo", "idx"):
+        value = detail.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _html_to_text(value: str) -> str:
+    cleaned = HTML_BLOCK_PATTERN.sub("", value)
+    cleaned = HTML_BREAK_PATTERN.sub("\n", cleaned)
+    cleaned = HTML_TAG_PATTERN.sub("", cleaned)
+    cleaned = html.unescape(cleaned)
+    lines = [" ".join(line.split()) for line in cleaned.splitlines()]
+    return "\n".join(line for line in lines if line)
+
+
+def _short_text_state(value: str | None) -> str | None:
+    if not value:
+        return None
+    if len(value) <= MAX_TEXT_SENSOR_STATE_LENGTH:
+        return value
+    return f"{value[: MAX_TEXT_SENSOR_STATE_LENGTH - 3]}..."
+
+
+def _latest_board_string_value(payload: Any, *keys: str) -> str | None:
+    detail = _latest_board_detail_payload(payload)
+    if detail is None:
+        return None
+    for key in keys:
+        value = detail.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _latest_board_content(payload: Any) -> str | None:
+    value = _latest_board_string_value(
+        payload,
+        "content",
+        "contents",
+        "body",
+        "bodyText",
+        "articleContent",
+        "description",
+        "text",
+    )
+    if value is None:
+        return None
+    return _html_to_text(value)
+
+
+def _add_image_url(urls: list[str], value: str) -> None:
+    value = html.unescape(value).strip()
+    if value and value not in urls:
+        urls.append(value)
+
+
+def _collect_board_image_urls(value: Any, urls: list[str], *, key_hint: str = "") -> None:
+    if len(urls) >= MAX_BOARD_IMAGE_URLS:
+        return
+    if isinstance(value, str):
+        for match in HTML_IMAGE_SRC_PATTERN.finditer(value):
+            _add_image_url(urls, match.group(1))
+            if len(urls) >= MAX_BOARD_IMAGE_URLS:
+                return
+        for match in IMAGE_URL_PATTERN.finditer(value):
+            _add_image_url(urls, match.group(0))
+            if len(urls) >= MAX_BOARD_IMAGE_URLS:
+                return
+        if key_hint and value.startswith(("http://", "https://")):
+            normalized_key = key_hint.lower()
+            if any(hint in normalized_key for hint in IMAGE_FIELD_HINTS):
+                _add_image_url(urls, value)
+        return
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            if isinstance(key, str):
+                _collect_board_image_urls(nested, urls, key_hint=key)
+            else:
+                _collect_board_image_urls(nested, urls)
+            if len(urls) >= MAX_BOARD_IMAGE_URLS:
+                return
+        return
+    if isinstance(value, list):
+        for item in value:
+            _collect_board_image_urls(item, urls, key_hint=key_hint)
+            if len(urls) >= MAX_BOARD_IMAGE_URLS:
+                return
+
+
+def _latest_board_image_urls(payload: Any) -> list[str]:
+    detail = _latest_board_detail_payload(payload)
+    if detail is None:
+        return []
+    urls: list[str] = []
+    _collect_board_image_urls(detail, urls)
+    return urls
+
+
+def _latest_board_first_image_url(payload: Any) -> str | None:
+    image_urls = _latest_board_image_urls(payload)
+    return image_urls[0] if image_urls else None
+
+
+def _latest_board_image_state(payload: Any) -> str | None:
+    first_image_url = _latest_board_first_image_url(payload)
+    if first_image_url is None:
+        return None
+    if len(first_image_url) <= MAX_TEXT_SENSOR_STATE_LENGTH:
+        return first_image_url
+    return "available"
+
+
+def _latest_board_article_attributes(payload: Any) -> dict[str, Any]:
+    attributes: dict[str, Any] = {}
+    article_id = _latest_board_article_id(payload)
+    if article_id is not None:
+        attributes["article_id"] = article_id
+    content = _latest_board_content(payload)
+    if content:
+        attributes["content"] = content
+    image_urls = _latest_board_image_urls(payload)
+    if image_urls:
+        attributes["image_count"] = len(image_urls)
+        attributes["first_image_url"] = image_urls[0]
+        attributes["image_urls"] = image_urls
+    return attributes
+
+
+def _latest_board_image_attributes(payload: Any) -> dict[str, Any]:
+    attributes: dict[str, Any] = {}
+    article_id = _latest_board_article_id(payload)
+    if article_id is not None:
+        attributes["article_id"] = article_id
+    image_urls = _latest_board_image_urls(payload)
+    if image_urls:
+        attributes["image_count"] = len(image_urls)
+        attributes["first_image_url"] = image_urls[0]
+        attributes["image_urls"] = image_urls
+    return attributes
 
 
 def _board_count(payload: Any) -> int | None:
@@ -323,7 +517,8 @@ def _board_count(payload: Any) -> int | None:
         return None
     if not isinstance(payload, dict):
         return None
-    total = payload.get("totalArticles")
+    listing = _board_list_payload(payload)
+    total = listing.get("totalArticles")
     if isinstance(total, int):
         return total
     return len(_board_articles(payload))
@@ -414,7 +609,7 @@ def _first_string_value(item: dict[str, Any], *keys: str) -> str | None:
 def _latest_board_title(payload: Any) -> str | None:
     if _error_text(payload):
         return None
-    latest = _first_dict_item(payload, "articleList")
+    latest = _latest_board_detail_payload(payload)
     if latest is None:
         return None
     title = latest.get("title")
@@ -424,7 +619,7 @@ def _latest_board_title(payload: Any) -> str | None:
 def _latest_board_date(payload: Any) -> str | None:
     if _error_text(payload):
         return None
-    latest = _first_dict_item(payload, "articleList")
+    latest = _latest_board_detail_payload(payload)
     if latest is None:
         return None
     for key in ("postDateFormatted", "regDateFormatted", "postDate", "regDate"):
@@ -437,7 +632,7 @@ def _latest_board_date(payload: Any) -> str | None:
 def _latest_board_status(payload: Any) -> str | None:
     if _error_text(payload):
         return None
-    latest = _first_dict_item(payload, "articleList")
+    latest = _latest_board_detail_payload(payload)
     if latest is None:
         return None
     status = latest.get("status")
@@ -1236,6 +1431,7 @@ def _visit_vehicle_usage_count(payload: Any) -> int | None:
 @dataclass(frozen=True, kw_only=True)
 class AptnerSensorDescription(SensorEntityDescription):
     value_fn: Callable[[dict[str, Any]], Any]
+    attributes_fn: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
     def __post_init__(self) -> None:
         if self.translation_key is None:
@@ -1283,6 +1479,20 @@ SENSORS: tuple[AptnerSensorDescription, ...] = (
         value_fn=lambda data: _latest_board_date(data.get("board_notice")),
     ),
     AptnerSensorDescription(
+        key="latest_notice_content",
+        name="Latest Notice Content",
+        icon="mdi:text-long",
+        value_fn=lambda data: _short_text_state(_latest_board_content(data.get("board_notice"))),
+        attributes_fn=lambda data: _latest_board_article_attributes(data.get("board_notice")),
+    ),
+    AptnerSensorDescription(
+        key="latest_notice_image",
+        name="Latest Notice Image",
+        icon="mdi:image",
+        value_fn=lambda data: _latest_board_image_state(data.get("board_notice")),
+        attributes_fn=lambda data: _latest_board_image_attributes(data.get("board_notice")),
+    ),
+    AptnerSensorDescription(
         key="community_count",
         name="Community Count",
         icon="mdi:account-group",
@@ -1293,6 +1503,20 @@ SENSORS: tuple[AptnerSensorDescription, ...] = (
         name="Latest Community Post",
         icon="mdi:forum-outline",
         value_fn=lambda data: _latest_board_title(data.get("board_community")),
+    ),
+    AptnerSensorDescription(
+        key="latest_community_content",
+        name="Latest Community Post Content",
+        icon="mdi:text-long",
+        value_fn=lambda data: _short_text_state(_latest_board_content(data.get("board_community"))),
+        attributes_fn=lambda data: _latest_board_article_attributes(data.get("board_community")),
+    ),
+    AptnerSensorDescription(
+        key="latest_community_image",
+        name="Latest Community Post Image",
+        icon="mdi:image",
+        value_fn=lambda data: _latest_board_image_state(data.get("board_community")),
+        attributes_fn=lambda data: _latest_board_image_attributes(data.get("board_community")),
     ),
     AptnerSensorDescription(
         key="complaint_count",
@@ -1675,6 +1899,13 @@ class AptnerSensor(CoordinatorEntity[AptnerDataUpdateCoordinator], SensorEntity)
     @property
     def native_value(self) -> Any:
         return self.entity_description.value_fn(self.coordinator.data)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        if self.entity_description.attributes_fn is None:
+            return None
+        attributes = self.entity_description.attributes_fn(self.coordinator.data)
+        return attributes or None
 
     @property
     def native_unit_of_measurement(self) -> str | None:

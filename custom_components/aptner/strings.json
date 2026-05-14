@@ -139,11 +139,23 @@
       "latest_notice_date": {
         "name": "Latest Notice Date"
       },
+      "latest_notice_content": {
+        "name": "Latest Notice Content"
+      },
+      "latest_notice_image": {
+        "name": "Latest Notice Image"
+      },
       "community_count": {
         "name": "Community Count"
       },
       "latest_community_title": {
         "name": "Latest Community Post"
+      },
+      "latest_community_content": {
+        "name": "Latest Community Post Content"
+      },
+      "latest_community_image": {
+        "name": "Latest Community Post Image"
       },
       "complaint_count": {
         "name": "Complaint Count"
