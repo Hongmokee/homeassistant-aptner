@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from functools import lru_cache
 from typing import Any
+from urllib.parse import urljoin, urlparse
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorEntityDescription
 from homeassistant.config_entries import ConfigEntry
@@ -157,7 +158,8 @@ PARKING_HISTORY_DATETIME_FORMATS = (
 
 MAX_TEXT_SENSOR_STATE_LENGTH = 255
 MAX_BOARD_IMAGE_URLS = 10
-APTNER_IMAGE_BASE_URL = "https://d3fixtu11mscj5.cloudfront.net"
+APTNER_KNOWN_IMAGE_HOSTS = {"d3fixtu11mscj5.cloudfront.net"}
+BOARD_IMAGE_EXTENSIONS = "png|jpe?g|gif|webp"
 HTML_BREAK_PATTERN = re.compile(r"(?i)<\s*(br|/p|/div|/li)\b[^>]*>")
 HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
 HTML_BLOCK_PATTERN = re.compile(r"(?is)<\s*(script|style)\b.*?<\s*/\s*\1\s*>")
@@ -166,11 +168,12 @@ HTML_BODY_PATTERN = re.compile(r"(?is)<\s*body\b[^>]*>(.*?)<\s*/\s*body\s*>")
 HTML_LIKE_PATTERN = re.compile(r"(?is)<\s*(html|body|div|p|span|br|img|table|ul|ol|li)\b")
 HTML_IMAGE_SRC_PATTERN = re.compile(r"(?is)<img\b[^>]*\bsrc\s*=\s*[\"']?([^\"'\s>]+)")
 IMAGE_URL_PATTERN = re.compile(
-    r"(?i)https?://[^\s\"'<>]+?\.(?:png|jpe?g|gif|webp)(?:\?[^\s\"'<>]*)?"
+    rf"(?i)https?://[^\s\"'<>]+?\.(?:{BOARD_IMAGE_EXTENSIONS})(?:\?[^\s\"'<>]*)?"
 )
 IMAGE_RELATIVE_PATH_PATTERN = re.compile(
-    r"(?i)(?:^|[\"'(\s])(/?aptner/board/[^\s\"'<>)]*?\.(?:png|jpe?g|gif|webp)(?:\?[^\s\"'<>)]*)?)"
+    rf"(?i)(?:^|[\"'(\s])(/?aptner/board/[^\s\"'<>)]*?\.(?:{BOARD_IMAGE_EXTENSIONS})(?:\?[^\s\"'<>)]*)?)"
 )
+ABSOLUTE_URL_PATTERN = re.compile(r"(?i)https?://[^\s\"'<>)]*")
 IMAGE_FIELD_HINTS = ("image", "img", "thumbnail", "photo", "picture")
 BASE64_DATA_PATTERN = re.compile(r"(?is)^\s*data:[^,;]+;base64,(.+)$")
 BASE64_TEXT_PATTERN = re.compile(r"^[A-Za-z0-9+/_-]+={0,2}$")
@@ -481,76 +484,164 @@ def _latest_board_content(payload: Any) -> str | None:
     return _html_to_text(value)
 
 
-def _normalize_board_image_url(value: str) -> str | None:
+def _board_image_base_url_from_payload(value: Any) -> str | None:
+    candidates: list[str] = []
+    _collect_absolute_urls(value, candidates)
+    for candidate in candidates:
+        parsed = urlparse(candidate)
+        if parsed.scheme != "https" or not parsed.netloc:
+            continue
+        if parsed.path.startswith("/aptner/board/") or parsed.netloc in APTNER_KNOWN_IMAGE_HOSTS:
+            return f"{parsed.scheme}://{parsed.netloc}"
+    return None
+
+
+def _collect_absolute_urls(value: Any, urls: list[str]) -> None:
+    if isinstance(value, str):
+        for match in ABSOLUTE_URL_PATTERN.finditer(value):
+            url = html.unescape(match.group(0)).strip().strip("\"'")
+            if url not in urls:
+                urls.append(url)
+        return
+    if isinstance(value, dict):
+        for nested in value.values():
+            _collect_absolute_urls(nested, urls)
+        return
+    if isinstance(value, list):
+        for item in value:
+            _collect_absolute_urls(item, urls)
+
+
+def _normalize_board_image_url(value: str, *, base_url: str | None = None) -> str | None:
     value = html.unescape(value).strip().strip("\"'")
     if not value:
         return None
     if value.startswith("//"):
-        return f"https:{value}"
+        value = f"https:{value}"
     if value.startswith(("http://", "https://")):
+        parsed = urlparse(value)
+        if parsed.scheme != "https" or not parsed.netloc:
+            return None
+        if not parsed.path.startswith("/aptner/board/"):
+            return None
         return value
-    if value.startswith("/aptner/board/"):
-        return f"{APTNER_IMAGE_BASE_URL}{value}"
-    if value.startswith("aptner/board/"):
-        return f"{APTNER_IMAGE_BASE_URL}/{value}"
+    if base_url is not None and (
+        value.startswith("/aptner/board/") or value.startswith("aptner/board/")
+    ):
+        return urljoin(f"{base_url.rstrip('/')}/", value.lstrip("/"))
     return None
 
 
-def _add_image_url(urls: list[str], value: str) -> None:
-    normalized = _normalize_board_image_url(value)
+def _add_image_url(urls: list[str], value: str, *, base_url: str | None = None) -> None:
+    normalized = _normalize_board_image_url(value, base_url=base_url)
     if normalized and normalized not in urls:
         urls.append(normalized)
 
 
-def _collect_board_image_urls(value: Any, urls: list[str], *, key_hint: str = "") -> None:
+def _normalize_board_image_path(value: str) -> str | None:
+    value = html.unescape(value).strip().strip("\"'")
+    if value.startswith("/aptner/board/"):
+        return value
+    if value.startswith("aptner/board/"):
+        return f"/{value}"
+    return None
+
+
+def _add_image_path(paths: list[str], value: str) -> None:
+    normalized = _normalize_board_image_path(value)
+    if normalized and normalized not in paths:
+        paths.append(normalized)
+
+
+def _collect_board_image_refs(
+    value: Any,
+    urls: list[str],
+    paths: list[str],
+    *,
+    key_hint: str = "",
+    base_url: str | None = None,
+) -> None:
     if len(urls) >= MAX_BOARD_IMAGE_URLS:
         return
     if isinstance(value, str):
         value = _decode_possible_base64_html(value)
         for match in HTML_IMAGE_SRC_PATTERN.finditer(value):
-            _add_image_url(urls, match.group(1))
+            _add_image_url(urls, match.group(1), base_url=base_url)
+            _add_image_path(paths, match.group(1))
             if len(urls) >= MAX_BOARD_IMAGE_URLS:
                 return
         for match in IMAGE_URL_PATTERN.finditer(value):
-            _add_image_url(urls, match.group(0))
+            _add_image_url(urls, match.group(0), base_url=base_url)
             if len(urls) >= MAX_BOARD_IMAGE_URLS:
                 return
         for match in IMAGE_RELATIVE_PATH_PATTERN.finditer(value):
-            _add_image_url(urls, match.group(1))
+            _add_image_url(urls, match.group(1), base_url=base_url)
+            _add_image_path(paths, match.group(1))
             if len(urls) >= MAX_BOARD_IMAGE_URLS:
                 return
         if key_hint:
             normalized_key = key_hint.lower()
             if any(hint in normalized_key for hint in IMAGE_FIELD_HINTS):
-                _add_image_url(urls, value)
+                _add_image_url(urls, value, base_url=base_url)
+                _add_image_path(paths, value)
         return
     if isinstance(value, dict):
         for key, nested in value.items():
             if isinstance(key, str):
-                _collect_board_image_urls(nested, urls, key_hint=key)
+                _collect_board_image_refs(
+                    nested,
+                    urls,
+                    paths,
+                    key_hint=key,
+                    base_url=base_url,
+                )
             else:
-                _collect_board_image_urls(nested, urls)
+                _collect_board_image_refs(nested, urls, paths, base_url=base_url)
             if len(urls) >= MAX_BOARD_IMAGE_URLS:
                 return
         return
     if isinstance(value, list):
         for item in value:
-            _collect_board_image_urls(item, urls, key_hint=key_hint)
+            _collect_board_image_refs(
+                item,
+                urls,
+                paths,
+                key_hint=key_hint,
+                base_url=base_url,
+            )
             if len(urls) >= MAX_BOARD_IMAGE_URLS:
                 return
 
 
-def _latest_board_image_urls(payload: Any) -> list[str]:
+def _latest_board_image_refs(payload: Any) -> tuple[list[str], list[str]]:
     detail = _latest_board_detail_payload(payload)
     if detail is None:
-        return []
+        return [], []
     urls: list[str] = []
+    paths: list[str] = []
+    base_url = _board_image_base_url_from_payload(detail)
     for key in BOARD_CONTENT_FIELDS:
-        _collect_board_image_urls(detail.get(key), urls, key_hint=key)
+        _collect_board_image_refs(
+            detail.get(key),
+            urls,
+            paths,
+            key_hint=key,
+            base_url=base_url,
+        )
         if len(urls) >= MAX_BOARD_IMAGE_URLS:
-            return urls
-    _collect_board_image_urls(detail, urls)
+            return urls, paths
+    _collect_board_image_refs(detail, urls, paths, base_url=base_url)
+    return urls, paths
+
+
+def _latest_board_image_urls(payload: Any) -> list[str]:
+    urls, _ = _latest_board_image_refs(payload)
     return urls
+
+
+def _latest_board_image_paths(payload: Any) -> list[str]:
+    _, paths = _latest_board_image_refs(payload)
+    return paths
 
 
 def _latest_board_first_image_url(payload: Any) -> str | None:
@@ -558,11 +649,19 @@ def _latest_board_first_image_url(payload: Any) -> str | None:
     return image_urls[0] if image_urls else None
 
 
+def _latest_board_first_image_path(payload: Any) -> str | None:
+    image_paths = _latest_board_image_paths(payload)
+    return image_paths[0] if image_paths else None
+
+
 def _latest_board_image_state(payload: Any) -> str | None:
     first_image_url = _latest_board_first_image_url(payload)
-    if first_image_url is None:
+    if first_image_url is not None:
+        return _short_text_state(first_image_url)
+    first_image_path = _latest_board_first_image_path(payload)
+    if first_image_path is None:
         return None
-    return _short_text_state(first_image_url)
+    return _short_text_state(first_image_path)
 
 
 def _latest_board_article_attributes(payload: Any) -> dict[str, Any]:
@@ -578,6 +677,11 @@ def _latest_board_article_attributes(payload: Any) -> dict[str, Any]:
         attributes["image_count"] = len(image_urls)
         attributes["first_image_url"] = image_urls[0]
         attributes["image_urls"] = image_urls
+    image_paths = _latest_board_image_paths(payload)
+    if image_paths:
+        attributes["image_path_count"] = len(image_paths)
+        attributes["first_image_path"] = image_paths[0]
+        attributes["image_paths"] = image_paths
     return attributes
 
 
@@ -591,6 +695,11 @@ def _latest_board_image_attributes(payload: Any) -> dict[str, Any]:
         attributes["image_count"] = len(image_urls)
         attributes["first_image_url"] = image_urls[0]
         attributes["image_urls"] = image_urls
+    image_paths = _latest_board_image_paths(payload)
+    if image_paths:
+        attributes["image_path_count"] = len(image_paths)
+        attributes["first_image_path"] = image_paths[0]
+        attributes["image_paths"] = image_paths
     return attributes
 
 
