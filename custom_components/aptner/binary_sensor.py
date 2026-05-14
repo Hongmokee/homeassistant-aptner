@@ -22,6 +22,17 @@ from .sensor import (
     _visit_valid_items,
 )
 
+SENSITIVE_BINARY_SENSOR_KEYS_DISABLED_BY_DEFAULT = {
+    "parking_vehicle_inside",
+    "parking_vehicle_last_event_entry",
+    "parking_vehicle_last_event_exit",
+    "parking_vehicle_inside_all",
+    "parking_vehicle_last_event_entry_all",
+    "parking_vehicle_last_event_exit_all",
+    "visit_vehicle_alert",
+    "visit_vehicle_today",
+}
+
 
 def _visit_vehicle_alert_on(data: dict[str, Any]) -> bool:
     payload = data.get("visit_vehicle_usage")
@@ -179,6 +190,8 @@ class AptnerBinarySensor(CoordinatorEntity[AptnerDataUpdateCoordinator], BinaryS
         self.entity_description = description
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
+        if description.key in SENSITIVE_BINARY_SENSOR_KEYS_DISABLED_BY_DEFAULT:
+            self._attr_entity_registry_enabled_default = False
 
     @property
     def is_on(self) -> bool:

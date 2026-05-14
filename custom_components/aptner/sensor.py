@@ -4,6 +4,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
+from functools import lru_cache
 from typing import Any
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorEntityDescription
@@ -142,6 +143,15 @@ SENSOR_PRECISION_BY_KEY: dict[str, int] = {
     "management_fee_history_count": 0,
 }
 
+PARKING_HISTORY_DATETIME_FORMATS = (
+    "%Y.%m.%d %H:%M:%S",
+    "%Y-%m-%d %H:%M:%S",
+    "%Y.%m.%d %H:%M",
+    "%Y-%m-%d %H:%M",
+    "%Y.%m.%d",
+    "%Y-%m-%d",
+)
+
 OVERVIEW_KEYS = {
     "apartment",
     "apartment_phone",
@@ -211,6 +221,16 @@ SAFETY_KEYS = {
 HOUSEHOLD_KEYS = {
     "household_member_count",
     "household_verified_count",
+}
+
+SENSITIVE_SENSOR_KEYS_DISABLED_BY_DEFAULT = {
+    "parking_vehicle_last_entry_at",
+    "parking_vehicle_last_exit_at",
+    "parking_vehicle_last_entry_at_all",
+    "parking_vehicle_last_exit_at_all",
+    "visit_vehicle_next_date",
+    "visit_vehicle_next_car_no",
+    "visit_vehicle_next_purpose",
 }
 
 
@@ -444,32 +464,27 @@ def _schedule_next_day(payload: Any) -> int | None:
     if _error_text(payload):
         return None
     events = _list_or_empty(payload, "events")
-    days = []
-    for event in events:
-        day = event.get("day")
-        if isinstance(day, int):
-            days.append(day)
-    if not days:
-        return None
-    return min(days)
+    days = (event.get("day") for event in events)
+    return min(
+        (day for day in days if isinstance(day, int)),
+        default=None,
+    )
 
 
-def _parse_parking_history_datetime(value: Any) -> datetime | None:
-    if not isinstance(value, str) or not value:
-        return None
-    for fmt in (
-        "%Y.%m.%d %H:%M:%S",
-        "%Y-%m-%d %H:%M:%S",
-        "%Y.%m.%d %H:%M",
-        "%Y-%m-%d %H:%M",
-        "%Y.%m.%d",
-        "%Y-%m-%d",
-    ):
+@lru_cache(maxsize=512)
+def _parse_parking_history_datetime_text(value: str) -> datetime | None:
+    for fmt in PARKING_HISTORY_DATETIME_FORMATS:
         try:
             return datetime.strptime(value, fmt)
         except ValueError:
             continue
     return None
+
+
+def _parse_parking_history_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    return _parse_parking_history_datetime_text(value.strip())
 
 
 def _boolean_from_any(value: Any, *, include_event_words: bool = False) -> bool | None:
@@ -561,18 +576,6 @@ def _guest_parking_event_timestamp(item: dict[str, Any]) -> datetime | None:
     )
 
 
-def _guest_parking_active_items(
-    payload: Any,
-    *,
-    include_resident: bool | None = None,
-) -> list[dict[str, Any]]:
-    return [
-        item
-        for item in _guest_parking_history_items(payload, include_resident=include_resident)
-        if _guest_parking_is_exit(item) is False
-    ]
-
-
 def _guest_parking_is_exit(item: dict[str, Any]) -> bool | None:
     is_exit = _boolean_from_any(item.get("isExit"), include_event_words=True)
     if is_exit is not None:
@@ -600,16 +603,17 @@ def _guest_parking_latest_item_by_timestamp(
     items: list[dict[str, Any]],
     timestamp_fn: Callable[[dict[str, Any]], datetime | None],
 ) -> dict[str, Any] | None:
-    candidates = [item for item in items if timestamp_fn(item) is not None]
-    if not candidates:
-        return None
-    return max(
-        candidates,
-        key=lambda item: (
-            timestamp_fn(item) or datetime.min,
-            str(item.get("carNo") or ""),
-        ),
-    )
+    latest_item = None
+    latest_key = None
+    for item in items:
+        timestamp = timestamp_fn(item)
+        if timestamp is None:
+            continue
+        item_key = (timestamp, str(item.get("carNo") or ""))
+        if latest_key is None or item_key > latest_key:
+            latest_item = item
+            latest_key = item_key
+    return latest_item
 
 
 def _guest_parking_latest_event_item(
@@ -710,18 +714,22 @@ def _guest_parking_latest_event(
     items = _guest_parking_history_items(payload, include_resident=include_resident)
     if not items:
         return None
-    latest_item = max(
-        items,
-        key=lambda item: (
-            _guest_parking_event_timestamp(item) or datetime.min,
-            str(item.get("carNo") or ""),
-        ),
-    )
+    latest_item = None
+    latest_event_at = None
+    latest_key = None
+    for item in items:
+        event_at = _guest_parking_event_timestamp(item)
+        item_key = (event_at or datetime.min, str(item.get("carNo") or ""))
+        if latest_key is None or item_key > latest_key:
+            latest_item = item
+            latest_event_at = event_at
+            latest_key = item_key
+    if latest_item is None:
+        return None
     event_type = "exit" if _guest_parking_is_exit(latest_item) is True else "entry"
-    event_at = _guest_parking_event_timestamp(latest_item)
     return {
         "type": event_type,
-        "at": event_at.isoformat(sep=" ") if event_at is not None else None,
+        "at": latest_event_at.isoformat(sep=" ") if latest_event_at is not None else None,
         "item": latest_item,
     }
 
@@ -733,7 +741,14 @@ def _guest_parking_active_count(
 ) -> int | None:
     if _error_text(payload):
         return None
-    return len(_guest_parking_active_items(payload, include_resident=include_resident))
+    return sum(
+        1
+        for item in _guest_parking_history_items(
+            payload,
+            include_resident=include_resident,
+        )
+        if _guest_parking_is_exit(item) is False
+    )
 
 
 def _parking_vehicle_history_payload(data: dict[str, Any]) -> Any:
@@ -1115,9 +1130,8 @@ def _visit_valid_items(payload: Any) -> list[dict[str, Any]]:
     ]
 
 
-def _parse_visit_date(value: Any) -> date | None:
-    if not isinstance(value, str) or not value:
-        return None
+@lru_cache(maxsize=512)
+def _parse_visit_date_text(value: str) -> date | None:
     for fmt in ("%Y-%m-%d", "%Y%m%d"):
         try:
             return datetime.strptime(value, fmt).date()
@@ -1138,6 +1152,12 @@ def _parse_visit_date(value: Any) -> date | None:
         except ValueError:
             return None
     return None
+
+
+def _parse_visit_date(value: Any) -> date | None:
+    if not isinstance(value, str) or not value:
+        return None
+    return _parse_visit_date_text(value.strip())
 
 
 def _visit_next_item(payload: Any) -> dict[str, Any] | None:
@@ -1649,6 +1669,8 @@ class AptnerSensor(CoordinatorEntity[AptnerDataUpdateCoordinator], SensorEntity)
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
         self._attr_icon = description.icon
+        if description.key in SENSITIVE_SENSOR_KEYS_DISABLED_BY_DEFAULT:
+            self._attr_entity_registry_enabled_default = False
 
     @property
     def native_value(self) -> Any:

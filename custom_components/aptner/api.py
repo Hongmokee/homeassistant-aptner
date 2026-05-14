@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from datetime import date
@@ -10,6 +11,13 @@ from typing import Any
 import aiohttp
 
 from .const import APP_VERSION, DEFAULT_PAGE_LIMIT, LEGACY_BASE_URL, LEGACY_OS, USER_AGENT, V2_BASE_URL
+
+MAX_ERROR_MESSAGE_LENGTH = 160
+SENSITIVE_ERROR_FIELD_PATTERN = re.compile(
+    r"(?i)([\"']?\b(?:accessToken|refreshToken|authorization|password|visitor_phone|"
+    r"visitorPhone|car_no|carNo|phone|tel|mbIdx|mb_idx)\b[\"']?\s*[:=]\s*[\"']?)"
+    r"[^,\"';}\s]+([\"']?)"
+)
 
 
 class AptnerApiError(Exception):
@@ -47,6 +55,7 @@ class AptnerApiClient:
         self._user: dict[str, Any] | None = None
         self._legacy: LegacyContext | None = None
         self._initialized = False
+        self._refresh_lock = asyncio.Lock()
 
     @property
     def user(self) -> dict[str, Any] | None:
@@ -143,11 +152,11 @@ class AptnerApiClient:
         try:
             return await coroutine
         except AptnerApiError as err:
-            return {"_error": str(err)}
+            return {"_error": self._sanitize_error_message(str(err))}
         except aiohttp.ClientError as err:
-            return {"_error": f"network error: {err}"}
+            return {"_error": self._sanitize_error_message(f"network error: {err}")}
         except OSError as err:
-            return {"_error": f"network error: {err}"}
+            return {"_error": self._sanitize_error_message(f"network error: {err}")}
 
     async def _safe_optional_feature(self, coroutine: Any) -> Any:
         try:
@@ -215,6 +224,7 @@ class AptnerApiClient:
         allow_refresh: bool = True,
     ) -> Any:
         url = f"{V2_BASE_URL}{path}"
+        request_token = self._access_token
         try:
             return await self._request_json(
                 method,
@@ -226,7 +236,9 @@ class AptnerApiClient:
         except AptnerApiError as err:
             if not allow_refresh or not include_auth or "401" not in str(err) or not self._refresh_token:
                 raise
-            await self._refresh_v2_token()
+            async with self._refresh_lock:
+                if self._access_token == request_token:
+                    await self._refresh_v2_token()
             return await self._request_json(
                 method,
                 url,
@@ -283,7 +295,9 @@ class AptnerApiClient:
 
             if response.status >= 400:
                 message = self._extract_error_message(data) or f"HTTP {response.status}"
-                raise AptnerApiError(f"{response.status}: {message}")
+                raise AptnerApiError(
+                    self._sanitize_error_message(f"{response.status}: {message}")
+                )
 
             return data
 
@@ -595,6 +609,16 @@ class AptnerApiClient:
         if isinstance(payload, str) and payload:
             return payload
         return None
+
+    def _sanitize_error_message(self, message: str) -> str:
+        sanitized = SENSITIVE_ERROR_FIELD_PATTERN.sub(
+            r"\1[redacted]\2",
+            message,
+        )
+        sanitized = " ".join(sanitized.split())
+        if len(sanitized) > MAX_ERROR_MESSAGE_LENGTH:
+            return f"{sanitized[:MAX_ERROR_MESSAGE_LENGTH]}..."
+        return sanitized
 
     def _require_string(self, payload: dict[str, Any], key: str) -> str:
         value = self._string_or_none(payload.get(key))

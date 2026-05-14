@@ -6,11 +6,17 @@
 
 `custom_components/aptner` 폴더를 Home Assistant의 `config/custom_components/aptner` 아래에 복사한 뒤, Home Assistant를 재시작하고 통합 추가 화면에서 아파트너 계정으로 로그인하면 됩니다.
 
+## 지원 버전
+
+- Home Assistant Core `2026.5.1` 이상
+- HACS 설치 시 `hacs.json`의 Home Assistant 최소 버전 기준을 따릅니다.
+
 ## 화면 예시
 
 ## 생성 엔티티
 
 아래 엔티티 키는 고정이며, 실제 `entity_id`는 Home Assistant 엔티티 레지스트리 규칙에 따라 생성됩니다.
+일부 주차/방문차량 세부 엔티티는 기본 비활성화 상태로 등록되며, 필요한 경우 Home Assistant의 엔티티 관리 화면에서 활성화할 수 있습니다.
 
 ### 1. 기본 정보
 
@@ -45,15 +51,15 @@
 - `guest_parking_household_limit`
 - `guest_parking_remaining_free`
 - `parking_discount_history_count`
-- `parking_vehicle_last_entry_at`: 방문차량 기준 최근 입차 시각
-- `parking_vehicle_last_exit_at`: 방문차량 기준 최근 출차 시각
-- `parking_vehicle_last_entry_at_all`: 우리집 차량 포함 최근 입차 시각
-- `parking_vehicle_last_exit_at_all`: 우리집 차량 포함 최근 출차 시각
+- `parking_vehicle_last_entry_at`: 방문차량 기준 최근 입차 시각, 기본 비활성화
+- `parking_vehicle_last_exit_at`: 방문차량 기준 최근 출차 시각, 기본 비활성화
+- `parking_vehicle_last_entry_at_all`: 우리집 차량 포함 최근 입차 시각, 기본 비활성화
+- `parking_vehicle_last_exit_at_all`: 우리집 차량 포함 최근 출차 시각, 기본 비활성화
 - `visit_vehicle_usage_count`
 - `visit_vehicle_valid_count`
-- `visit_vehicle_next_date`
-- `visit_vehicle_next_car_no`
-- `visit_vehicle_next_purpose`
+- `visit_vehicle_next_date`: 기본 비활성화
+- `visit_vehicle_next_car_no`: 기본 비활성화
+- `visit_vehicle_next_purpose`: 기본 비활성화
 
 ### 6. 부동산 / 안전 / 세대
 
@@ -81,6 +87,8 @@
 
 ## 생성 바이너리 센서
 
+아래 바이너리 센서는 기본 비활성화 상태로 등록되며, 필요한 항목만 선택해서 활성화할 수 있습니다.
+
 ### 1. 주차 입출차
 
 - `parking_vehicle_inside`: 방문차량 기준 현재 미출차 차량 존재 여부
@@ -102,3 +110,12 @@
 - `aptner.submit_survey`: 설문 제출
 - `aptner.register_visit_vehicle`: 방문차량 등록
 - `aptner.cancel_visit_vehicle`: 방문차량 예약 취소
+
+여러 Aptner 계정을 등록한 경우에는 상태를 변경하는 서비스 호출 시 `entry_id`를 함께 지정해야 합니다.
+
+서비스 입력 형식은 다음 기준을 따릅니다.
+
+- `sign_file_url`: `https://` URL
+- `visit_date`: `YYYY-MM-DD HH:MM` 또는 `YYYY-MM-DD HH:MM:SS`
+- `visitor_phone`: 숫자, 공백, 하이픈, 선택적 `+` 기호
+- `vote_id`, `selection_item_id`, `survey_id`, `question_id`: 1 이상의 정수

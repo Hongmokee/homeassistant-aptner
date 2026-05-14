@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import re
+from datetime import datetime
 from typing import Any
+from urllib.parse import urlparse
 
 import voluptuous as vol
 
@@ -19,44 +22,152 @@ from .const import (
 
 ATTR_ENTRY_ID = "entry_id"
 
-SERVICE_BASE_SCHEMA = vol.Schema({vol.Optional(ATTR_ENTRY_ID): str})
+MAX_ENTRY_ID_LENGTH = 128
+MAX_SIGN_FILE_URL_LENGTH = 2048
+MAX_ANSWER_LENGTH = 1000
+MAX_CAR_NO_LENGTH = 20
+MAX_VISITOR_PHONE_LENGTH = 20
+MAX_VISIT_PURPOSE_LENGTH = 100
+MAX_VISIT_RESERVE_IDX_LENGTH = 32
+MAX_SURVEY_ANSWERS = 50
+
+POSITIVE_INT = vol.All(vol.Coerce(int), vol.Range(min=1))
+PHONE_PATTERN = re.compile(r"^\+?[0-9][0-9 -]{6,18}[0-9]$")
+VISIT_DATE_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M")
+
+
+def _bounded_string(
+    value: Any,
+    *,
+    field: str,
+    max_length: int,
+    min_length: int = 1,
+) -> str:
+    text = cv.string(value).strip()
+    if len(text) < min_length:
+        raise vol.Invalid(f"{field} is required")
+    if len(text) > max_length:
+        raise vol.Invalid(f"{field} is too long")
+    if any(ord(char) < 32 or ord(char) == 127 for char in text):
+        raise vol.Invalid(f"{field} contains control characters")
+    return text
+
+
+def _entry_id(value: Any) -> str:
+    return _bounded_string(
+        value,
+        field=ATTR_ENTRY_ID,
+        max_length=MAX_ENTRY_ID_LENGTH,
+    )
+
+
+def _https_url(value: Any) -> str:
+    text = _bounded_string(
+        value,
+        field="sign_file_url",
+        max_length=MAX_SIGN_FILE_URL_LENGTH,
+    )
+    parsed = urlparse(text)
+    if parsed.scheme.lower() != "https" or not parsed.netloc:
+        raise vol.Invalid("sign_file_url must be an HTTPS URL")
+    return text
+
+
+def _answer_text(value: Any) -> str:
+    return _bounded_string(value, field="answer", max_length=MAX_ANSWER_LENGTH)
+
+
+def _car_no(value: Any) -> str:
+    return _bounded_string(
+        value,
+        field="car_no",
+        max_length=MAX_CAR_NO_LENGTH,
+        min_length=2,
+    )
+
+
+def _visitor_phone(value: Any) -> str:
+    text = _bounded_string(
+        value,
+        field="visitor_phone",
+        max_length=MAX_VISITOR_PHONE_LENGTH,
+    )
+    if PHONE_PATTERN.fullmatch(text) is None:
+        raise vol.Invalid("visitor_phone has an invalid format")
+    return text
+
+
+def _visit_date(value: Any) -> str:
+    text = _bounded_string(value, field="visit_date", max_length=19)
+    for date_format in VISIT_DATE_FORMATS:
+        try:
+            datetime.strptime(text, date_format)
+        except ValueError:
+            continue
+        return text
+    raise vol.Invalid("visit_date has an invalid format")
+
+
+def _visit_purpose(value: Any) -> str:
+    return _bounded_string(
+        value,
+        field="visit_purpose",
+        max_length=MAX_VISIT_PURPOSE_LENGTH,
+    )
+
+
+def _visit_reserve_idx(value: Any) -> str:
+    text = _bounded_string(
+        value,
+        field="visit_reserve_idx",
+        max_length=MAX_VISIT_RESERVE_IDX_LENGTH,
+    )
+    if not text.isdecimal():
+        raise vol.Invalid("visit_reserve_idx must be numeric")
+    return text
+
+
+SERVICE_BASE_SCHEMA = vol.Schema({vol.Optional(ATTR_ENTRY_ID): _entry_id})
 
 SERVICE_REFRESH_SCHEMA = SERVICE_BASE_SCHEMA
 
 SERVICE_SUBMIT_VOTE_SCHEMA = SERVICE_BASE_SCHEMA.extend(
     {
-        vol.Required("vote_id"): vol.Coerce(int),
-        vol.Optional("selection_item_id"): vol.Coerce(int),
-        vol.Optional("sign_file_url"): str,
+        vol.Required("vote_id"): POSITIVE_INT,
+        vol.Optional("selection_item_id"): POSITIVE_INT,
+        vol.Optional("sign_file_url"): _https_url,
     }
 )
 
 SERVICE_SUBMIT_SURVEY_SCHEMA = SERVICE_BASE_SCHEMA.extend(
     {
-        vol.Required("survey_id"): vol.Coerce(int),
-        vol.Required("answers"): [
-            vol.Schema(
-                {
-                    vol.Required("question_id"): vol.Coerce(int),
-                    vol.Required("answer"): str,
-                }
-            )
-        ],
+        vol.Required("survey_id"): POSITIVE_INT,
+        vol.Required("answers"): vol.All(
+            [
+                vol.Schema(
+                    {
+                        vol.Required("question_id"): POSITIVE_INT,
+                        vol.Required("answer"): _answer_text,
+                    }
+                )
+            ],
+            vol.Length(min=1, max=MAX_SURVEY_ANSWERS),
+        ),
     }
 )
 
 SERVICE_REGISTER_VISIT_VEHICLE_SCHEMA = SERVICE_BASE_SCHEMA.extend(
     {
-        vol.Required("car_no"): str,
-        vol.Required("visitor_phone"): str,
-        vol.Required("visit_date"): str,
-        vol.Required("visit_purpose"): str,
+        vol.Required("car_no"): _car_no,
+        vol.Required("visitor_phone"): _visitor_phone,
+        vol.Required("visit_date"): _visit_date,
+        vol.Required("visit_purpose"): _visit_purpose,
     }
 )
 
 SERVICE_CANCEL_VISIT_VEHICLE_SCHEMA = SERVICE_BASE_SCHEMA.extend(
     {
-        vol.Required("visit_reserve_idx"): cv.string,
+        vol.Required("visit_reserve_idx"): _visit_reserve_idx,
     }
 )
 
@@ -70,6 +181,10 @@ def _get_coordinator(hass: HomeAssistant, entry_id: str | None):
         if coordinator is None:
             raise HomeAssistantError(f"Unknown Aptner entry_id: {entry_id}")
         return coordinator
+    if len(entries) > 1:
+        raise HomeAssistantError(
+            "Multiple Aptner entries are configured; entry_id is required."
+        )
     return next(iter(entries.values()))
 
 
