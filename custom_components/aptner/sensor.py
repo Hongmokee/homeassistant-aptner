@@ -163,6 +163,7 @@ HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
 HTML_BLOCK_PATTERN = re.compile(r"(?is)<\s*(script|style)\b.*?<\s*/\s*\1\s*>")
 HTML_HEAD_PATTERN = re.compile(r"(?is)<\s*head\b.*?<\s*/\s*head\s*>")
 HTML_BODY_PATTERN = re.compile(r"(?is)<\s*body\b[^>]*>(.*?)<\s*/\s*body\s*>")
+HTML_LIKE_PATTERN = re.compile(r"(?is)<\s*(html|body|div|p|span|br|img|table|ul|ol|li)\b")
 HTML_IMAGE_SRC_PATTERN = re.compile(r"(?is)<img\b[^>]*\bsrc\s*=\s*[\"']?([^\"'\s>]+)")
 IMAGE_URL_PATTERN = re.compile(
     r"(?i)https?://[^\s\"'<>]+?\.(?:png|jpe?g|gif|webp)(?:\?[^\s\"'<>]*)?"
@@ -171,7 +172,8 @@ IMAGE_RELATIVE_PATH_PATTERN = re.compile(
     r"(?i)(?:^|[\"'(\s])(/?aptner/board/[^\s\"'<>)]*?\.(?:png|jpe?g|gif|webp)(?:\?[^\s\"'<>)]*)?)"
 )
 IMAGE_FIELD_HINTS = ("image", "img", "thumbnail", "photo", "picture")
-BASE64_TEXT_PATTERN = re.compile(r"^[A-Za-z0-9+/]+={0,2}$")
+BASE64_DATA_PATTERN = re.compile(r"(?is)^\s*data:[^,;]+;base64,(.+)$")
+BASE64_TEXT_PATTERN = re.compile(r"^[A-Za-z0-9+/_-]+={0,2}$")
 BOARD_CONTENT_FIELDS = (
     "content",
     "contents",
@@ -401,6 +403,7 @@ def _latest_board_article_id(payload: Any) -> Any:
 
 
 def _html_to_text(value: str) -> str:
+    value = _decode_possible_base64_html(value)
     body_match = HTML_BODY_PATTERN.search(value)
     cleaned = body_match.group(1) if body_match else value
     cleaned = HTML_HEAD_PATTERN.sub("", cleaned)
@@ -413,11 +416,18 @@ def _html_to_text(value: str) -> str:
 
 
 def _decode_base64_text(value: str) -> str | None:
+    value = html.unescape(value).strip().strip("\"'")
+    data_match = BASE64_DATA_PATTERN.match(value)
+    is_data_uri = data_match is not None
+    if data_match:
+        value = data_match.group(1)
     compact = "".join(value.split())
-    if len(compact) < 16 or len(compact) % 4 != 0:
+    if len(compact) < 16:
         return None
     if BASE64_TEXT_PATTERN.fullmatch(compact) is None:
         return None
+    compact = compact.replace("-", "+").replace("_", "/")
+    compact += "=" * (-len(compact) % 4)
     try:
         decoded = base64.b64decode(compact, validate=True)
     except (binascii.Error, ValueError):
@@ -427,9 +437,14 @@ def _decode_base64_text(value: str) -> str | None:
             text = decoded.decode(encoding)
         except UnicodeDecodeError:
             continue
-        if "<" in text and ">" in text:
+        if not text.strip():
+            continue
+        printable = sum(char.isprintable() or char.isspace() for char in text)
+        if printable / len(text) < 0.9:
+            continue
+        if HTML_LIKE_PATTERN.search(text):
             return text
-        if any(char.isalpha() for char in text):
+        if is_data_uri and any(char.isalpha() for char in text):
             return text
     return None
 
@@ -442,6 +457,7 @@ def _decode_possible_base64_html(value: str) -> str:
 def _short_text_state(value: str | None) -> str | None:
     if not value:
         return None
+    value = _html_to_text(value)
     if len(value) <= MAX_TEXT_SENSOR_STATE_LENGTH:
         return value
     return f"{value[: MAX_TEXT_SENSOR_STATE_LENGTH - 3]}..."
@@ -462,7 +478,7 @@ def _latest_board_content(payload: Any) -> str | None:
     value = _latest_board_string_value(payload, *BOARD_CONTENT_FIELDS)
     if value is None:
         return None
-    return _html_to_text(_decode_possible_base64_html(value))
+    return _html_to_text(value)
 
 
 def _normalize_board_image_url(value: str) -> str | None:
