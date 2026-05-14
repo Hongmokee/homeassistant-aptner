@@ -142,9 +142,6 @@
       "latest_notice_content": {
         "name": "최신 공지 내용"
       },
-      "latest_notice_image": {
-        "name": "최신 공지 이미지"
-      },
       "community_count": {
         "name": "커뮤니티 게시글 수"
       },
@@ -153,9 +150,6 @@
       },
       "latest_community_content": {
         "name": "최신 커뮤니티 글 내용"
-      },
-      "latest_community_image": {
-        "name": "최신 커뮤니티 글 이미지"
       },
       "complaint_count": {
         "name": "민원 수"

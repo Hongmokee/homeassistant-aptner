@@ -198,11 +198,9 @@ COMMUNITY_KEYS = {
     "latest_notice_title",
     "latest_notice_date",
     "latest_notice_content",
-    "latest_notice_image",
     "community_count",
     "latest_community_title",
     "latest_community_content",
-    "latest_community_image",
     "complaint_count",
     "latest_complaint_title",
     "latest_complaint_status",
@@ -272,11 +270,6 @@ SENSITIVE_SENSOR_KEYS_DISABLED_BY_DEFAULT = {
     "visit_vehicle_next_purpose",
 }
 
-BOARD_IMAGE_SENSOR_KEYS = {
-    "latest_notice_image",
-    "latest_community_image",
-}
-
 
 def _device_group_for_key(entity_key: str) -> str:
     if entity_key in OVERVIEW_KEYS:
@@ -328,9 +321,9 @@ def _device_info_for_key(
     data: dict[str, Any],
     entity_key: str,
 ) -> DeviceInfo:
-    apartment_name = _apartment_name_value(data) or "Aptner"
     group_key = _device_group_for_key(entity_key)
     group_name = _localized_group_name(hass, group_key)
+    apartment_name = _apartment_name_value(data) or "Aptner"
 
     if group_key == "overview":
         return DeviceInfo(
@@ -639,29 +632,9 @@ def _latest_board_image_urls(payload: Any) -> list[str]:
     return urls
 
 
-def _latest_board_image_paths(payload: Any) -> list[str]:
-    _, paths = _latest_board_image_refs(payload)
-    return paths
-
-
 def _latest_board_first_image_url(payload: Any) -> str | None:
     image_urls = _latest_board_image_urls(payload)
     return image_urls[0] if image_urls else None
-
-
-def _latest_board_first_image_path(payload: Any) -> str | None:
-    image_paths = _latest_board_image_paths(payload)
-    return image_paths[0] if image_paths else None
-
-
-def _latest_board_image_state(payload: Any) -> str | None:
-    first_image_url = _latest_board_first_image_url(payload)
-    if first_image_url is not None:
-        return _short_text_state(first_image_url)
-    first_image_path = _latest_board_first_image_path(payload)
-    if first_image_path is None:
-        return None
-    return _short_text_state(first_image_path)
 
 
 def _latest_board_article_attributes(payload: Any) -> dict[str, Any]:
@@ -672,34 +645,6 @@ def _latest_board_article_attributes(payload: Any) -> dict[str, Any]:
     content = _latest_board_content(payload)
     if content:
         attributes["content"] = content
-    image_urls = _latest_board_image_urls(payload)
-    if image_urls:
-        attributes["image_count"] = len(image_urls)
-        attributes["first_image_url"] = image_urls[0]
-        attributes["image_urls"] = image_urls
-    image_paths = _latest_board_image_paths(payload)
-    if image_paths:
-        attributes["image_path_count"] = len(image_paths)
-        attributes["first_image_path"] = image_paths[0]
-        attributes["image_paths"] = image_paths
-    return attributes
-
-
-def _latest_board_image_attributes(payload: Any) -> dict[str, Any]:
-    attributes: dict[str, Any] = {}
-    article_id = _latest_board_article_id(payload)
-    if article_id is not None:
-        attributes["article_id"] = article_id
-    image_urls = _latest_board_image_urls(payload)
-    if image_urls:
-        attributes["image_count"] = len(image_urls)
-        attributes["first_image_url"] = image_urls[0]
-        attributes["image_urls"] = image_urls
-    image_paths = _latest_board_image_paths(payload)
-    if image_paths:
-        attributes["image_path_count"] = len(image_paths)
-        attributes["first_image_path"] = image_paths[0]
-        attributes["image_paths"] = image_paths
     return attributes
 
 
@@ -1677,13 +1622,6 @@ SENSORS: tuple[AptnerSensorDescription, ...] = (
         attributes_fn=lambda data: _latest_board_article_attributes(data.get("board_notice")),
     ),
     AptnerSensorDescription(
-        key="latest_notice_image",
-        name="Latest Notice Image",
-        icon="mdi:image",
-        value_fn=lambda data: _latest_board_image_state(data.get("board_notice")),
-        attributes_fn=lambda data: _latest_board_image_attributes(data.get("board_notice")),
-    ),
-    AptnerSensorDescription(
         key="community_count",
         name="Community Count",
         icon="mdi:account-group",
@@ -1701,13 +1639,6 @@ SENSORS: tuple[AptnerSensorDescription, ...] = (
         icon="mdi:text-long",
         value_fn=lambda data: _short_text_state(_latest_board_content(data.get("board_community"))),
         attributes_fn=lambda data: _latest_board_article_attributes(data.get("board_community")),
-    ),
-    AptnerSensorDescription(
-        key="latest_community_image",
-        name="Latest Community Post Image",
-        icon="mdi:image",
-        value_fn=lambda data: _latest_board_image_state(data.get("board_community")),
-        attributes_fn=lambda data: _latest_board_image_attributes(data.get("board_community")),
     ),
     AptnerSensorDescription(
         key="complaint_count",
@@ -2097,14 +2028,6 @@ class AptnerSensor(CoordinatorEntity[AptnerDataUpdateCoordinator], SensorEntity)
             return None
         attributes = self.entity_description.attributes_fn(self.coordinator.data)
         return attributes or None
-
-    @property
-    def entity_picture(self) -> str | None:
-        if self.entity_description.key not in BOARD_IMAGE_SENSOR_KEYS:
-            return None
-        attributes = self.extra_state_attributes or {}
-        first_image_url = attributes.get("first_image_url")
-        return first_image_url if isinstance(first_image_url, str) else None
 
     @property
     def native_unit_of_measurement(self) -> str | None:

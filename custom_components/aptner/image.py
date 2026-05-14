@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any
 
 from homeassistant.components.image import ImageEntity
 from homeassistant.config_entries import ConfigEntry
@@ -16,7 +15,6 @@ from .coordinator import AptnerDataUpdateCoordinator
 from .sensor import (
     _device_info_for_key,
     _latest_board_first_image_url,
-    _latest_board_image_attributes,
 )
 
 
@@ -81,13 +79,6 @@ class AptnerImage(CoordinatorEntity[AptnerDataUpdateCoordinator], ImageEntity):
     @property
     def image_last_updated(self) -> datetime | None:
         return self._image_last_updated
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any] | None:
-        attributes = _latest_board_image_attributes(
-            self.coordinator.data.get(self.entity_description.payload_key)
-        )
-        return attributes or None
 
     @property
     def device_info(self) -> DeviceInfo:
