@@ -335,6 +335,14 @@
       "visit_vehicle_today": {
         "name": "오늘 방문차량"
       }
+    },
+    "image": {
+      "latest_notice_image": {
+        "name": "최신 공지 이미지"
+      },
+      "latest_community_image": {
+        "name": "최신 커뮤니티 글 이미지"
+      }
     }
   }
 }

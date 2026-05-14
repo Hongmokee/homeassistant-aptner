@@ -5,7 +5,7 @@ from datetime import timedelta
 from homeassistant.const import Platform
 
 DOMAIN = "aptner"
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR, Platform.IMAGE]
 
 APP_VERSION = "2.21.50"
 LEGACY_OS = "android"

@@ -335,6 +335,14 @@
       "visit_vehicle_today": {
         "name": "Visit Vehicle Today"
       }
+    },
+    "image": {
+      "latest_notice_image": {
+        "name": "Latest Notice Image"
+      },
+      "latest_community_image": {
+        "name": "Latest Community Post Image"
+      }
     }
   }
 }

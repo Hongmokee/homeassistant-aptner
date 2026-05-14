@@ -155,14 +155,27 @@ PARKING_HISTORY_DATETIME_FORMATS = (
 
 MAX_TEXT_SENSOR_STATE_LENGTH = 255
 MAX_BOARD_IMAGE_URLS = 10
+APTNER_IMAGE_BASE_URL = "https://d3fixtu11mscj5.cloudfront.net"
 HTML_BREAK_PATTERN = re.compile(r"(?i)<\s*(br|/p|/div|/li)\b[^>]*>")
 HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
 HTML_BLOCK_PATTERN = re.compile(r"(?is)<\s*(script|style)\b.*?<\s*/\s*\1\s*>")
-HTML_IMAGE_SRC_PATTERN = re.compile(r"(?is)<img\b[^>]*\bsrc=[\"']([^\"']+)[\"']")
+HTML_IMAGE_SRC_PATTERN = re.compile(r"(?is)<img\b[^>]*\bsrc\s*=\s*[\"']?([^\"'\s>]+)")
 IMAGE_URL_PATTERN = re.compile(
     r"(?i)https?://[^\s\"'<>]+?\.(?:png|jpe?g|gif|webp)(?:\?[^\s\"'<>]*)?"
 )
+IMAGE_RELATIVE_PATH_PATTERN = re.compile(
+    r"(?i)(?:^|[\"'(\s])(/?aptner/board/[^\s\"'<>)]*?\.(?:png|jpe?g|gif|webp)(?:\?[^\s\"'<>)]*)?)"
+)
 IMAGE_FIELD_HINTS = ("image", "img", "thumbnail", "photo", "picture")
+BOARD_CONTENT_FIELDS = (
+    "content",
+    "contents",
+    "body",
+    "bodyText",
+    "articleContent",
+    "description",
+    "text",
+)
 
 OVERVIEW_KEYS = {
     "apartment",
@@ -247,6 +260,11 @@ SENSITIVE_SENSOR_KEYS_DISABLED_BY_DEFAULT = {
     "visit_vehicle_next_date",
     "visit_vehicle_next_car_no",
     "visit_vehicle_next_purpose",
+}
+
+BOARD_IMAGE_SENSOR_KEYS = {
+    "latest_notice_image",
+    "latest_community_image",
 }
 
 
@@ -406,25 +424,31 @@ def _latest_board_string_value(payload: Any, *keys: str) -> str | None:
 
 
 def _latest_board_content(payload: Any) -> str | None:
-    value = _latest_board_string_value(
-        payload,
-        "content",
-        "contents",
-        "body",
-        "bodyText",
-        "articleContent",
-        "description",
-        "text",
-    )
+    value = _latest_board_string_value(payload, *BOARD_CONTENT_FIELDS)
     if value is None:
         return None
     return _html_to_text(value)
 
 
+def _normalize_board_image_url(value: str) -> str | None:
+    value = html.unescape(value).strip().strip("\"'")
+    if not value:
+        return None
+    if value.startswith("//"):
+        return f"https:{value}"
+    if value.startswith(("http://", "https://")):
+        return value
+    if value.startswith("/aptner/board/"):
+        return f"{APTNER_IMAGE_BASE_URL}{value}"
+    if value.startswith("aptner/board/"):
+        return f"{APTNER_IMAGE_BASE_URL}/{value}"
+    return None
+
+
 def _add_image_url(urls: list[str], value: str) -> None:
-    value = html.unescape(value).strip()
-    if value and value not in urls:
-        urls.append(value)
+    normalized = _normalize_board_image_url(value)
+    if normalized and normalized not in urls:
+        urls.append(normalized)
 
 
 def _collect_board_image_urls(value: Any, urls: list[str], *, key_hint: str = "") -> None:
@@ -439,7 +463,11 @@ def _collect_board_image_urls(value: Any, urls: list[str], *, key_hint: str = ""
             _add_image_url(urls, match.group(0))
             if len(urls) >= MAX_BOARD_IMAGE_URLS:
                 return
-        if key_hint and value.startswith(("http://", "https://")):
+        for match in IMAGE_RELATIVE_PATH_PATTERN.finditer(value):
+            _add_image_url(urls, match.group(1))
+            if len(urls) >= MAX_BOARD_IMAGE_URLS:
+                return
+        if key_hint:
             normalized_key = key_hint.lower()
             if any(hint in normalized_key for hint in IMAGE_FIELD_HINTS):
                 _add_image_url(urls, value)
@@ -465,6 +493,10 @@ def _latest_board_image_urls(payload: Any) -> list[str]:
     if detail is None:
         return []
     urls: list[str] = []
+    for key in BOARD_CONTENT_FIELDS:
+        _collect_board_image_urls(detail.get(key), urls, key_hint=key)
+        if len(urls) >= MAX_BOARD_IMAGE_URLS:
+            return urls
     _collect_board_image_urls(detail, urls)
     return urls
 
@@ -478,9 +510,7 @@ def _latest_board_image_state(payload: Any) -> str | None:
     first_image_url = _latest_board_first_image_url(payload)
     if first_image_url is None:
         return None
-    if len(first_image_url) <= MAX_TEXT_SENSOR_STATE_LENGTH:
-        return first_image_url
-    return "available"
+    return _short_text_state(first_image_url)
 
 
 def _latest_board_article_attributes(payload: Any) -> dict[str, Any]:
@@ -1906,6 +1936,14 @@ class AptnerSensor(CoordinatorEntity[AptnerDataUpdateCoordinator], SensorEntity)
             return None
         attributes = self.entity_description.attributes_fn(self.coordinator.data)
         return attributes or None
+
+    @property
+    def entity_picture(self) -> str | None:
+        if self.entity_description.key not in BOARD_IMAGE_SENSOR_KEYS:
+            return None
+        attributes = self.extra_state_attributes or {}
+        first_image_url = attributes.get("first_image_url")
+        return first_image_url if isinstance(first_image_url, str) else None
 
     @property
     def native_unit_of_measurement(self) -> str | None:

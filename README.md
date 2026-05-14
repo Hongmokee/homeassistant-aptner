@@ -2,6 +2,10 @@
 
 [아파트너 App Store](https://apps.apple.com/kr/app/%EC%95%84%ED%8C%8C%ED%8A%B8%EB%84%88-no-1-%EC%95%84%ED%8C%8C%ED%8A%B8%EC%95%B1/id1243505765)
 
+현재 버전: `0.2.0`
+
+이 컴포넌트는 [lunDreame/homeassistant-aptner](https://github.com/lunDreame/homeassistant-aptner)의 `0.1.4` 코드를 기반으로 수정되었습니다.
+
 ## 설치
 
 `custom_components/aptner` 폴더를 Home Assistant의 `config/custom_components/aptner` 아래에 복사한 뒤, Home Assistant를 재시작하고 통합 추가 화면에서 아파트너 계정으로 로그인하면 됩니다.
@@ -106,6 +110,13 @@
 
 - `visit_vehicle_alert`: 유효한 방문차량 예약 존재 여부
 - `visit_vehicle_today`: 오늘 방문차량 예약 존재 여부
+
+## 생성 이미지 엔티티
+
+공지/커뮤니티 글에 이미지가 포함되어 있으면 아래 이미지 엔티티가 생성됩니다.
+
+- `latest_notice_image`: 최신 공지의 첫 번째 이미지
+- `latest_community_image`: 최신 커뮤니티 글의 첫 번째 이미지
 
 ## 제공 서비스
 

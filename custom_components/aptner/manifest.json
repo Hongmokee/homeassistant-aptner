@@ -6,5 +6,5 @@
   "documentation": "https://github.com/lunDreame/homeassistant-aptner",
   "iot_class": "cloud_polling",
   "requirements": [],
-  "version": "0.1.4"
+  "version": "0.2.0"
 }
