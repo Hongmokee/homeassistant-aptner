@@ -10,7 +10,7 @@ from homeassistant.components.image import ImageEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityDescription
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -38,10 +38,14 @@ IMAGE_CONTENT_TYPES_BY_EXTENSION = {
 
 
 @dataclass(frozen=True, kw_only=True)
-class AptnerImageDescription:
-    key: str
+class AptnerImageDescription(EntityDescription):
     payload_key: str
     icon: str = "mdi:image"
+
+    def __post_init__(self) -> None:
+        if self.translation_key is None:
+            object.__setattr__(self, "translation_key", self.key)
+        object.__setattr__(self, "name", None)
 
 
 IMAGES: tuple[AptnerImageDescription, ...] = (
