@@ -16,6 +16,7 @@ from .const import (
     DEFAULT_SCAN_INTERVAL_MINUTES,
     DOMAIN,
     PLATFORMS,
+    enabled_sections_from_config,
 )
 from .coordinator import AptnerDataUpdateCoordinator
 from .services import async_register_services, async_unregister_services
@@ -44,6 +45,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         session=session,
         username=entry.data[CONF_USERNAME],
         password=entry.data[CONF_PASSWORD],
+        enabled_sections=enabled_sections_from_config(entry.data, entry.options),
         page_limit=entry.options.get(CONF_PAGE_LIMIT, DEFAULT_PAGE_LIMIT),
     )
     coordinator = AptnerDataUpdateCoordinator(

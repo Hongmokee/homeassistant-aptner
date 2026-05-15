@@ -6,7 +6,8 @@
         "description": "Enter your Aptner login.",
         "data": {
           "username": "Username",
-          "password": "Password"
+          "password": "Password",
+          "enabled_sections": "Additional categories to use"
         }
       }
     },
@@ -22,7 +23,8 @@
         "description": "Tune polling and fetch limits.",
         "data": {
           "scan_interval_minutes": "Scan interval (minutes)",
-          "page_limit": "Items to fetch per request"
+          "page_limit": "Items to fetch per request",
+          "enabled_sections": "Additional categories to use"
         }
       }
     }

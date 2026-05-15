@@ -14,7 +14,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DOMAIN, SECTION_COMMUNITY, enabled_sections_from_config
 from .coordinator import AptnerDataUpdateCoordinator
 from .sensor import (
     _device_info_for_key,
@@ -80,6 +80,8 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: AptnerDataUpdateCoordinator = hass.data[DOMAIN]["entries"][entry.entry_id]
+    if SECTION_COMMUNITY not in enabled_sections_from_config(entry.data, entry.options):
+        return
     entities = [AptnerImage(coordinator, entry, description) for description in IMAGES]
     async_add_entities(entities)
 

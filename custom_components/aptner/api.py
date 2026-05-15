@@ -11,7 +11,22 @@ from urllib.parse import quote
 
 import aiohttp
 
-from .const import APP_VERSION, DEFAULT_PAGE_LIMIT, LEGACY_BASE_URL, LEGACY_OS, USER_AGENT, V2_BASE_URL
+from .const import (
+    APP_VERSION,
+    DEFAULT_ENABLED_SECTIONS,
+    DEFAULT_PAGE_LIMIT,
+    LEGACY_BASE_URL,
+    LEGACY_OS,
+    SECTION_BILLING,
+    SECTION_COMMUNITY,
+    SECTION_HOUSEHOLD,
+    SECTION_OVERVIEW,
+    SECTION_PARKING,
+    SECTION_SAFETY,
+    SECTION_SCHEDULE,
+    USER_AGENT,
+    V2_BASE_URL,
+)
 
 MAX_ERROR_MESSAGE_LENGTH = 160
 SENSITIVE_ERROR_FIELD_PATTERN = re.compile(
@@ -44,11 +59,13 @@ class AptnerApiClient:
         username: str,
         password: str,
         *,
+        enabled_sections: tuple[str, ...] = DEFAULT_ENABLED_SECTIONS,
         page_limit: int = DEFAULT_PAGE_LIMIT,
     ) -> None:
         self._session = session
         self._username = username
         self._password = password
+        self._enabled_sections = set(enabled_sections)
         self._page_limit = page_limit
 
         self._access_token: str | None = None
@@ -57,6 +74,7 @@ class AptnerApiClient:
         self._legacy: LegacyContext | None = None
         self._initialized = False
         self._refresh_lock = asyncio.Lock()
+        self._legacy_lock = asyncio.Lock()
 
     @property
     def user(self) -> dict[str, Any] | None:
@@ -82,11 +100,8 @@ class AptnerApiClient:
         self._refresh_token = self._require_string(tokens, "refreshToken")
         self._user = await self._request_v2("GET", "/user/me")
 
-        try:
-            await self._authenticate_legacy()
-        except AptnerApiError:
-            # The integration keeps working without legacy bootstrap.
-            self._legacy = None
+        if self._needs_legacy_context():
+            await self._ensure_legacy()
 
         self._initialized = True
 
@@ -99,32 +114,196 @@ class AptnerApiClient:
         kapt_code = user.get("kaptCode")
         today = date.today()
 
-        request_plan: list[tuple[str, asyncio.Task[Any]]] = [
-            ("usage_services", self._schedule_optional(lambda: self._fetch_usage_services(kapt_code), kapt_code)),
-            ("board_notice", asyncio.create_task(self._safe_fetch(self._fetch_board_articles_with_latest("notice")))),
-            ("board_community", asyncio.create_task(self._safe_fetch(self._fetch_board_articles_with_latest("comm")))),
-            ("board_complaint", asyncio.create_task(self._safe_fetch(self._fetch_board_articles("complaint")))),
-            ("board_defect", asyncio.create_task(self._safe_fetch(self._safe_optional_feature(self._fetch_board_articles("as"))))),
-            ("board_region", asyncio.create_task(self._safe_fetch(self._fetch_board_articles("region")))),
-            ("schedule", asyncio.create_task(self._safe_fetch(self._fetch_schedule(today.year, today.month)))),
-            ("vote_current", asyncio.create_task(self._safe_fetch(self._fetch_votes("current")))),
-            ("vote_closed", asyncio.create_task(self._safe_fetch(self._fetch_votes("closed")))),
-            ("survey_ing", asyncio.create_task(self._safe_fetch(self._fetch_surveys("ing")))),
-            ("survey_done", asyncio.create_task(self._safe_fetch(self._fetch_surveys("done")))),
-            ("aptner_notice", asyncio.create_task(self._safe_fetch(self._fetch_aptner_notices()))),
-            ("contacts", self._schedule_optional(lambda: self._fetch_contacts(kapt_code), kapt_code)),
-            ("broadcast", asyncio.create_task(self._safe_fetch(self._fetch_broadcast()))),
-            ("guest_parking", asyncio.create_task(self._safe_fetch(self._fetch_guest_parking()))),
-            ("guest_parking_history", asyncio.create_task(self._safe_fetch(self._fetch_guest_parking_history()))),
-            ("parking_hub_history", asyncio.create_task(self._safe_fetch(self._fetch_parking_hub_history()))),
-            ("parking_discount_history", asyncio.create_task(self._safe_fetch(self._fetch_parking_discount_history()))),
-            ("household_members", asyncio.create_task(self._safe_fetch(self._fetch_household_members()))),
-            ("visit_vehicle_usage", asyncio.create_task(self._safe_fetch(self._fetch_visit_vehicle_usage()))),
-            ("realtor", self._schedule_optional(lambda: self._fetch_realtor(kapt_code), kapt_code)),
-            ("fire_inspection_status", asyncio.create_task(self._safe_fetch(self._fetch_fire_inspection_status()))),
-            ("fire_inspection_history", asyncio.create_task(self._safe_fetch(self._fetch_fire_inspection_history()))),
-            ("management_fee", asyncio.create_task(self._safe_fetch(self._fetch_management_fee()))),
-        ]
+        request_plan: list[tuple[str, asyncio.Task[Any]]] = []
+
+        if self._section_enabled(SECTION_OVERVIEW):
+            request_plan.append(
+                (
+                    "usage_services",
+                    self._schedule_optional(
+                        lambda: self._fetch_usage_services(kapt_code),
+                        kapt_code,
+                    ),
+                )
+            )
+
+        if self._section_enabled(SECTION_COMMUNITY):
+            request_plan.extend(
+                (
+                    (
+                        "board_notice",
+                        asyncio.create_task(
+                            self._safe_fetch(
+                                self._fetch_board_articles_with_latest("notice")
+                            )
+                        ),
+                    ),
+                    (
+                        "board_community",
+                        asyncio.create_task(
+                            self._safe_fetch(
+                                self._fetch_board_articles_with_latest("comm")
+                            )
+                        ),
+                    ),
+                    (
+                        "board_complaint",
+                        asyncio.create_task(
+                            self._safe_fetch(self._fetch_board_articles("complaint"))
+                        ),
+                    ),
+                    (
+                        "board_defect",
+                        asyncio.create_task(
+                            self._safe_fetch(
+                                self._safe_optional_feature(
+                                    self._fetch_board_articles("as")
+                                )
+                            )
+                        ),
+                    ),
+                    (
+                        "board_region",
+                        asyncio.create_task(
+                            self._safe_fetch(self._fetch_board_articles("region"))
+                        ),
+                    ),
+                    (
+                        "aptner_notice",
+                        asyncio.create_task(
+                            self._safe_fetch(self._fetch_aptner_notices())
+                        ),
+                    ),
+                    (
+                        "contacts",
+                        self._schedule_optional(
+                            lambda: self._fetch_contacts(kapt_code),
+                            kapt_code,
+                        ),
+                    ),
+                    (
+                        "broadcast",
+                        asyncio.create_task(self._safe_fetch(self._fetch_broadcast())),
+                    ),
+                    (
+                        "realtor",
+                        self._schedule_optional(
+                            lambda: self._fetch_realtor(kapt_code),
+                            kapt_code,
+                        ),
+                    ),
+                )
+            )
+
+        if self._section_enabled(SECTION_SCHEDULE):
+            request_plan.extend(
+                (
+                    (
+                        "schedule",
+                        asyncio.create_task(
+                            self._safe_fetch(
+                                self._fetch_schedule(today.year, today.month)
+                            )
+                        ),
+                    ),
+                    (
+                        "vote_current",
+                        asyncio.create_task(
+                            self._safe_fetch(self._fetch_votes("current"))
+                        ),
+                    ),
+                    (
+                        "vote_closed",
+                        asyncio.create_task(
+                            self._safe_fetch(self._fetch_votes("closed"))
+                        ),
+                    ),
+                    (
+                        "survey_ing",
+                        asyncio.create_task(
+                            self._safe_fetch(self._fetch_surveys("ing"))
+                        ),
+                    ),
+                    (
+                        "survey_done",
+                        asyncio.create_task(
+                            self._safe_fetch(self._fetch_surveys("done"))
+                        ),
+                    ),
+                )
+            )
+
+        if self._section_enabled(SECTION_PARKING):
+            request_plan.extend(
+                (
+                    (
+                        "guest_parking",
+                        asyncio.create_task(
+                            self._safe_fetch(self._fetch_guest_parking())
+                        ),
+                    ),
+                    (
+                        "guest_parking_history",
+                        asyncio.create_task(
+                            self._safe_fetch(self._fetch_guest_parking_history())
+                        ),
+                    ),
+                    (
+                        "parking_hub_history",
+                        asyncio.create_task(
+                            self._safe_fetch(self._fetch_parking_hub_history())
+                        ),
+                    ),
+                    (
+                        "parking_discount_history",
+                        asyncio.create_task(
+                            self._safe_fetch(self._fetch_parking_discount_history())
+                        ),
+                    ),
+                    (
+                        "visit_vehicle_usage",
+                        asyncio.create_task(
+                            self._safe_fetch(self._fetch_visit_vehicle_usage())
+                        ),
+                    ),
+                )
+            )
+
+        if self._section_enabled(SECTION_HOUSEHOLD):
+            request_plan.append(
+                (
+                    "household_members",
+                    asyncio.create_task(
+                        self._safe_fetch(self._fetch_household_members())
+                    ),
+                )
+            )
+
+        if self._section_enabled(SECTION_SAFETY):
+            request_plan.extend(
+                (
+                    (
+                        "fire_inspection_status",
+                        asyncio.create_task(
+                            self._safe_fetch(self._fetch_fire_inspection_status())
+                        ),
+                    ),
+                    (
+                        "fire_inspection_history",
+                        asyncio.create_task(
+                            self._safe_fetch(self._fetch_fire_inspection_history())
+                        ),
+                    ),
+                )
+            )
+
+        if self._section_enabled(SECTION_BILLING):
+            request_plan.append(
+                (
+                    "management_fee",
+                    asyncio.create_task(self._safe_fetch(self._fetch_management_fee())),
+                )
+            )
 
         results = await asyncio.gather(*(task for _, task in request_plan))
 
@@ -148,6 +327,26 @@ class AptnerApiClient:
 
     async def _return_value(self, value: Any) -> Any:
         return value
+
+    def _section_enabled(self, section: str) -> bool:
+        return section in self._enabled_sections
+
+    def _needs_legacy_context(self) -> bool:
+        return bool(self._enabled_sections & {SECTION_BILLING, SECTION_PARKING})
+
+    async def _ensure_legacy(self) -> bool:
+        if self._legacy is not None:
+            return True
+        async with self._legacy_lock:
+            if self._legacy is not None:
+                return True
+            try:
+                await self._authenticate_legacy()
+            except AptnerApiError:
+                # The integration keeps working without legacy bootstrap.
+                self._legacy = None
+                return False
+            return True
 
     async def _safe_fetch(self, coroutine: Any) -> Any:
         try:
@@ -437,7 +636,7 @@ class AptnerApiClient:
         return await self._request_v2("GET", "/user/household/members")
 
     async def _fetch_visit_vehicle_usage(self) -> Any:
-        if self._legacy is None:
+        if not await self._ensure_legacy():
             return {"_error": "legacy visit context unavailable"}
         return await self._request_legacy(
             "GET",
@@ -462,7 +661,7 @@ class AptnerApiClient:
         return self._unwrap_common_response(payload)
 
     async def _fetch_management_fee(self) -> Any:
-        if self._legacy is None:
+        if not await self._ensure_legacy():
             return {"_error": "legacy fee context unavailable"}
 
         periods_payload = await self._request_legacy(
@@ -590,7 +789,7 @@ class AptnerApiClient:
         visit_purpose: str,
     ) -> Any:
         await self.async_initialize()
-        if self._legacy is None:
+        if not await self._ensure_legacy():
             raise AptnerApiError("legacy visit context unavailable")
         return await self._request_legacy(
             "POST",
@@ -606,7 +805,7 @@ class AptnerApiClient:
 
     async def async_cancel_visit_vehicle(self, *, visit_reserve_idx: str) -> Any:
         await self.async_initialize()
-        if self._legacy is None:
+        if not await self._ensure_legacy():
             raise AptnerApiError("legacy visit context unavailable")
         return await self._request_legacy(
             "GET",

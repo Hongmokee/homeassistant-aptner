@@ -6,7 +6,8 @@
         "description": "아파트너 로그인 정보를 입력하세요.",
         "data": {
           "username": "아이디",
-          "password": "비밀번호"
+          "password": "비밀번호",
+          "enabled_sections": "추가로 사용할 항목"
         }
       }
     },
@@ -22,7 +23,8 @@
         "description": "갱신 주기와 조회 개수를 조정합니다.",
         "data": {
           "scan_interval_minutes": "갱신 주기(분)",
-          "page_limit": "요청당 조회 개수"
+          "page_limit": "요청당 조회 개수",
+          "enabled_sections": "추가로 사용할 항목"
         }
       }
     }

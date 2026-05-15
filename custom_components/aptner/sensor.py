@@ -19,7 +19,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import DOMAIN, SECTION_BILLING, enabled_sections_from_config
 from .coordinator import AptnerDataUpdateCoordinator
 
 DEVICE_GROUP_NAMES_BY_LANGUAGE: dict[str, dict[str, str]] = {
@@ -1982,18 +1982,22 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator: AptnerDataUpdateCoordinator = hass.data[DOMAIN]["entries"][entry.entry_id]
+    enabled_sections = set(enabled_sections_from_config(entry.data, entry.options))
     entities: list[SensorEntity] = [
-        AptnerSensor(coordinator, entry, description) for description in SENSORS
+        AptnerSensor(coordinator, entry, description)
+        for description in SENSORS
+        if _device_group_for_key(description.key) in enabled_sections
     ]
-    for fallback_index, item in enumerate(_management_fee_entity_items(coordinator.data)):
-        entities.append(
-            AptnerFeeBreakdownSensor(
-                coordinator,
-                entry,
-                index=_management_fee_entity_index(item, fallback_index),
-                label=_management_fee_entity_label(item, fallback_index),
+    if SECTION_BILLING in enabled_sections:
+        for fallback_index, item in enumerate(_management_fee_entity_items(coordinator.data)):
+            entities.append(
+                AptnerFeeBreakdownSensor(
+                    coordinator,
+                    entry,
+                    index=_management_fee_entity_index(item, fallback_index),
+                    label=_management_fee_entity_label(item, fallback_index),
+                )
             )
-        )
     async_add_entities(entities)
 
 
