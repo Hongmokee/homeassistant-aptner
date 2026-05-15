@@ -38,6 +38,21 @@ IMAGE_CONTENT_TYPES_BY_EXTENSION = {
     ".webp": "image/webp",
 }
 
+IMAGE_CONTENT_TYPE_ALIASES = {
+    "image/jpg": "image/jpeg",
+    "image/pjpeg": "image/jpeg",
+    "image/x-citrix-jpeg": "image/jpeg",
+    "image/x-png": "image/png",
+    "image/x-citrix-png": "image/png",
+}
+
+IMAGE_SIGNATURE_CONTENT_TYPES = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+)
+
 
 @dataclass(frozen=True, kw_only=True)
 class AptnerImageDescription(EntityDescription):
@@ -76,14 +91,34 @@ def _content_type_from_url(url: str | None) -> str:
     return "image/jpeg"
 
 
-def _valid_response_content_type(content_type: str | None, fallback: str) -> str | None:
+def _normalize_image_content_type(content_type: str | None) -> str | None:
     if content_type:
         content_type = content_type.split(";", maxsplit=1)[0].strip().lower()
+        content_type = IMAGE_CONTENT_TYPE_ALIASES.get(content_type, content_type)
         if content_type.startswith("image/"):
             return content_type
-    if fallback.startswith("image/"):
-        return fallback
     return None
+
+
+def _valid_response_content_type(content_type: str | None, fallback: str) -> str | None:
+    return _normalize_image_content_type(
+        content_type,
+    ) or _normalize_image_content_type(fallback)
+
+
+def _content_type_from_image_bytes(image: bytes) -> str | None:
+    for signature, content_type in IMAGE_SIGNATURE_CONTENT_TYPES:
+        if image.startswith(signature):
+            return content_type
+    if len(image) >= 12 and image.startswith(b"RIFF") and image[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def _content_type_for_image(image: bytes, fallback: str) -> str | None:
+    return _content_type_from_image_bytes(image) or _normalize_image_content_type(
+        fallback,
+    )
 
 
 def _board_payload_for_image(payload: object) -> object:
@@ -217,6 +252,14 @@ class AptnerImage(CoordinatorEntity[AptnerDataUpdateCoordinator], ImageEntity):
         if len(image) > MAX_IMAGE_BYTES:
             _LOGGER.warning(
                 "%s image is too large to load",
+                self.entity_description.key,
+            )
+            return None
+
+        content_type = _content_type_for_image(image, content_type)
+        if content_type is None:
+            _LOGGER.warning(
+                "%s image response did not contain supported image content",
                 self.entity_description.key,
             )
             return None
