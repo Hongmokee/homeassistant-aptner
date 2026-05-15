@@ -26,7 +26,8 @@ from .sensor import (
 _LOGGER = logging.getLogger(__name__)
 
 GET_IMAGE_TIMEOUT = aiohttp.ClientTimeout(total=15)
-MAX_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_IMAGE_BYTES = 100 * 1024 * 1024
+IMAGE_READ_CHUNK_BYTES = 64 * 1024
 
 IMAGE_CONTENT_TYPES_BY_EXTENSION = {
     ".gif": "image/gif",
@@ -177,7 +178,18 @@ class AptnerImage(CoordinatorEntity[AptnerDataUpdateCoordinator], ImageEntity):
                         self.entity_description.key,
                     )
                     return None
-                image = await response.content.read(MAX_IMAGE_BYTES + 1)
+                image_buffer = bytearray()
+                async for chunk in response.content.iter_chunked(
+                    IMAGE_READ_CHUNK_BYTES
+                ):
+                    image_buffer.extend(chunk)
+                    if len(image_buffer) > MAX_IMAGE_BYTES:
+                        _LOGGER.warning(
+                            "%s image is too large to load",
+                            self.entity_description.key,
+                        )
+                        return None
+                image = bytes(image_buffer)
         except (aiohttp.ClientError, TimeoutError, OSError) as err:
             _LOGGER.warning(
                 "Failed to load %s image: %s",
