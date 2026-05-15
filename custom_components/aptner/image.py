@@ -18,7 +18,9 @@ from .const import DOMAIN, SECTION_COMMUNITY, enabled_sections_from_config
 from .coordinator import AptnerDataUpdateCoordinator
 from .sensor import (
     _device_info_for_key,
+    _latest_board_article_id,
     _latest_board_first_image_url,
+    _latest_board_title,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -110,6 +112,7 @@ class AptnerImage(CoordinatorEntity[AptnerDataUpdateCoordinator], ImageEntity):
         self._image_url = self._current_image_url()
         self._image: bytes | None = None
         self._attr_content_type = _content_type_from_url(self._image_url)
+        self._update_extra_state_attributes()
         self._attr_image_last_updated = (
             datetime.now(timezone.utc) if self._image_url else None
         )
@@ -118,6 +121,10 @@ class AptnerImage(CoordinatorEntity[AptnerDataUpdateCoordinator], ImageEntity):
         return _latest_board_first_image_url(
             self.coordinator.data.get(self.entity_description.payload_key)
         )
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._image_url is not None
 
     @property
     def content_type(self) -> str:
@@ -131,6 +138,8 @@ class AptnerImage(CoordinatorEntity[AptnerDataUpdateCoordinator], ImageEntity):
         """Return bytes of image."""
         image_url = self._current_image_url()
         if not image_url:
+            if self._image_url is not None:
+                self._set_image_url(None)
             return None
         if image_url != self._image_url:
             self._set_image_url(image_url)
@@ -197,12 +206,28 @@ class AptnerImage(CoordinatorEntity[AptnerDataUpdateCoordinator], ImageEntity):
         self._image_url = image_url
         self._image = None
         self._attr_content_type = _content_type_from_url(image_url)
+        self._update_extra_state_attributes()
         self._attr_image_last_updated = (
             datetime.now(timezone.utc) if image_url else None
         )
+
+    def _update_extra_state_attributes(self) -> None:
+        payload = self.coordinator.data.get(self.entity_description.payload_key)
+        attributes = {}
+        article_id = _latest_board_article_id(payload)
+        title = _latest_board_title(payload)
+        if article_id is not None:
+            attributes["article_id"] = article_id
+        if title:
+            attributes["article_title"] = title
+        if self._image_url:
+            attributes["image_url"] = self._image_url
+        self._attr_extra_state_attributes = attributes
 
     def _handle_coordinator_update(self) -> None:
         image_url = self._current_image_url()
         if image_url != self._image_url:
             self._set_image_url(image_url)
+        else:
+            self._update_extra_state_attributes()
         super()._handle_coordinator_update()
