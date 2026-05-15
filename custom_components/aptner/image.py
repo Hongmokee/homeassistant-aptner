@@ -20,6 +20,7 @@ from .sensor import (
     _device_info_for_key,
     _latest_board_article_id,
     _latest_board_first_image_url,
+    _latest_board_image_urls,
     _latest_board_title,
 )
 
@@ -56,6 +57,12 @@ IMAGES: tuple[AptnerImageDescription, ...] = (
         payload_key="board_notice",
         suggested_object_id="latest_notice_image",
     ),
+    AptnerImageDescription(
+        key="queued_notice_image",
+        name="Queued Notice Image",
+        payload_key="notice_replay",
+        suggested_object_id="queued_notice_image",
+    ),
 )
 
 
@@ -77,6 +84,14 @@ def _valid_response_content_type(content_type: str | None, fallback: str) -> str
     if fallback.startswith("image/"):
         return fallback
     return None
+
+
+def _board_payload_for_image(payload: object) -> object:
+    if isinstance(payload, dict):
+        active = payload.get("active")
+        if isinstance(active, dict):
+            return {"latest": active}
+    return payload
 
 
 async def async_setup_entry(
@@ -123,7 +138,9 @@ class AptnerImage(CoordinatorEntity[AptnerDataUpdateCoordinator], ImageEntity):
 
     def _current_image_url(self) -> str | None:
         return _latest_board_first_image_url(
-            self.coordinator.data.get(self.entity_description.payload_key)
+            _board_payload_for_image(
+                self.coordinator.data.get(self.entity_description.payload_key)
+            )
         )
 
     @property
@@ -227,16 +244,21 @@ class AptnerImage(CoordinatorEntity[AptnerDataUpdateCoordinator], ImageEntity):
         )
 
     def _update_extra_state_attributes(self) -> None:
-        payload = self.coordinator.data.get(self.entity_description.payload_key)
+        payload = _board_payload_for_image(
+            self.coordinator.data.get(self.entity_description.payload_key)
+        )
         attributes = {}
         article_id = _latest_board_article_id(payload)
         title = _latest_board_title(payload)
+        image_urls = _latest_board_image_urls(payload)
         if article_id is not None:
             attributes["article_id"] = article_id
         if title:
             attributes["article_title"] = title
         if self._image_url:
             attributes["image_url"] = self._image_url
+        if image_urls:
+            attributes["image_urls"] = image_urls
         self._attr_extra_state_attributes = attributes
 
     def _handle_coordinator_update(self) -> None:

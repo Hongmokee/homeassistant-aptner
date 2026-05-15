@@ -51,6 +51,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = AptnerDataUpdateCoordinator(
         hass,
         client,
+        entry_id=entry.entry_id,
         update_interval=timedelta(
             minutes=entry.options.get(
                 CONF_SCAN_INTERVAL_MINUTES,
@@ -61,6 +62,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_config_entry_first_refresh()
 
     domain_data["entries"][entry.entry_id] = coordinator
+    entry.async_on_unload(coordinator.async_shutdown)
     entry.async_on_unload(entry.add_update_listener(async_reload_entry))
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True

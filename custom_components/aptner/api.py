@@ -525,6 +525,15 @@ class AptnerApiClient:
             "latest": latest,
         }
 
+    async def async_fetch_board_article_detail(
+        self,
+        board_group: str,
+        article_id: str,
+    ) -> Any:
+        """Fetch one board article detail payload."""
+        await self.async_initialize()
+        return await self._fetch_board_article_detail(board_group, article_id)
+
     async def _fetch_board_article_detail(self, board_group: str, article_id: str) -> Any:
         article_id_path = quote(article_id, safe="")
         paths = (

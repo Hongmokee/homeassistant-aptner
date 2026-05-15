@@ -144,6 +144,18 @@
       "latest_notice_content": {
         "name": "최신 공지 내용"
       },
+      "queued_notice_title": {
+        "name": "지연중계 공지"
+      },
+      "queued_notice_article_id": {
+        "name": "지연중계 공지 글 ID"
+      },
+      "queued_notice_content": {
+        "name": "지연중계 공지 내용"
+      },
+      "queued_notice_remaining": {
+        "name": "남은 지연중계 공지"
+      },
       "community_count": {
         "name": "커뮤니티 게시글 수"
       },
@@ -335,6 +347,9 @@
     "image": {
       "latest_notice_image": {
         "name": "최신 공지 이미지"
+      },
+      "queued_notice_image": {
+        "name": "지연중계 공지 이미지"
       },
       "latest_community_image": {
         "name": "최신 커뮤니티 글 이미지"

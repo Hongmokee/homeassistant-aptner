@@ -47,6 +47,7 @@ SENSOR_UNITS_BY_LANGUAGE: dict[str, dict[str, str]] = {
     "en": {
         "usage_services": "services",
         "notice_count": "items",
+        "queued_notice_remaining": "items",
         "community_count": "items",
         "complaint_count": "items",
         "defect_count": "items",
@@ -78,6 +79,7 @@ SENSOR_UNITS_BY_LANGUAGE: dict[str, dict[str, str]] = {
     "ko": {
         "usage_services": "개",
         "notice_count": "건",
+        "queued_notice_remaining": "건",
         "community_count": "건",
         "complaint_count": "건",
         "defect_count": "건",
@@ -111,6 +113,7 @@ SENSOR_UNITS_BY_LANGUAGE: dict[str, dict[str, str]] = {
 SENSOR_PRECISION_BY_KEY: dict[str, int] = {
     "usage_services": 0,
     "notice_count": 0,
+    "queued_notice_remaining": 0,
     "community_count": 0,
     "complaint_count": 0,
     "defect_count": 0,
@@ -199,6 +202,11 @@ COMMUNITY_KEYS = {
     "latest_notice_date",
     "latest_notice_content",
     "latest_notice_image",
+    "queued_notice_article_id",
+    "queued_notice_title",
+    "queued_notice_content",
+    "queued_notice_remaining",
+    "queued_notice_image",
     "community_count",
     "latest_community_title",
     "latest_community_content",
@@ -646,6 +654,52 @@ def _latest_board_article_attributes(payload: Any) -> dict[str, Any]:
     content = _latest_board_content(payload)
     if content:
         attributes["content"] = content
+    return attributes
+
+
+def _queued_notice_active_article(payload: Any) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    active = payload.get("active")
+    return active if isinstance(active, dict) else None
+
+
+def _queued_notice_board_payload(payload: Any) -> dict[str, Any]:
+    active = _queued_notice_active_article(payload)
+    return {"latest": active} if active is not None else {}
+
+
+def _queued_notice_title(payload: Any) -> str | None:
+    return _latest_board_title(_queued_notice_board_payload(payload))
+
+
+def _queued_notice_article_id(payload: Any) -> Any:
+    return _latest_board_article_id(_queued_notice_board_payload(payload))
+
+
+def _queued_notice_content(payload: Any) -> str | None:
+    return _latest_board_content(_queued_notice_board_payload(payload))
+
+
+def _queued_notice_remaining(payload: Any) -> int | None:
+    if not isinstance(payload, dict):
+        return None
+    pending = payload.get("pending")
+    return pending if isinstance(pending, int) else None
+
+
+def _queued_notice_article_attributes(payload: Any) -> dict[str, Any]:
+    attributes = _latest_board_article_attributes(
+        _queued_notice_board_payload(payload)
+    )
+    if isinstance(payload, dict):
+        for key in ("pending", "delay_seconds", "queued_at", "replayed_at"):
+            value = payload.get(key)
+            if value is not None:
+                attributes[key] = value
+    image_urls = _latest_board_image_urls(_queued_notice_board_payload(payload))
+    if image_urls:
+        attributes["image_urls"] = image_urls
     return attributes
 
 
@@ -1621,6 +1675,37 @@ SENSORS: tuple[AptnerSensorDescription, ...] = (
         icon="mdi:text-long",
         value_fn=lambda data: _short_text_state(_latest_board_content(data.get("board_notice"))),
         attributes_fn=lambda data: _latest_board_article_attributes(data.get("board_notice")),
+    ),
+    AptnerSensorDescription(
+        key="queued_notice_title",
+        name="Queued Notice",
+        icon="mdi:bullhorn-outline",
+        value_fn=lambda data: _queued_notice_title(data.get("notice_replay")),
+    ),
+    AptnerSensorDescription(
+        key="queued_notice_article_id",
+        name="Queued Notice Article ID",
+        icon="mdi:identifier",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: _queued_notice_article_id(data.get("notice_replay")),
+    ),
+    AptnerSensorDescription(
+        key="queued_notice_content",
+        name="Queued Notice Content",
+        icon="mdi:text-long",
+        value_fn=lambda data: _short_text_state(
+            _queued_notice_content(data.get("notice_replay"))
+        ),
+        attributes_fn=lambda data: _queued_notice_article_attributes(
+            data.get("notice_replay")
+        ),
+    ),
+    AptnerSensorDescription(
+        key="queued_notice_remaining",
+        name="Queued Notice Remaining",
+        icon="mdi:format-list-numbered",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda data: _queued_notice_remaining(data.get("notice_replay")),
     ),
     AptnerSensorDescription(
         key="community_count",

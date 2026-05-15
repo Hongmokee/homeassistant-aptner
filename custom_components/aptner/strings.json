@@ -144,6 +144,18 @@
       "latest_notice_content": {
         "name": "Latest Notice Content"
       },
+      "queued_notice_title": {
+        "name": "Queued Notice"
+      },
+      "queued_notice_article_id": {
+        "name": "Queued Notice Article ID"
+      },
+      "queued_notice_content": {
+        "name": "Queued Notice Content"
+      },
+      "queued_notice_remaining": {
+        "name": "Queued Notice Remaining"
+      },
       "community_count": {
         "name": "Community Count"
       },
@@ -335,6 +347,9 @@
     "image": {
       "latest_notice_image": {
         "name": "Latest Notice Image"
+      },
+      "queued_notice_image": {
+        "name": "Queued Notice Image"
       },
       "latest_community_image": {
         "name": "Latest Community Post Image"
