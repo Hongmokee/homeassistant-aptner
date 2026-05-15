@@ -84,3 +84,19 @@ cancel_visit_vehicle:
       required: true
       selector:
         text:
+
+set_notice_ocr_content:
+  fields:
+    entry_id:
+      required: false
+      selector:
+        text:
+    content:
+      required: true
+      selector:
+        text:
+          multiline: true
+    article_id:
+      required: false
+      selector:
+        text:

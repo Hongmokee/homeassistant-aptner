@@ -20,7 +20,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, SECTION_BILLING, enabled_sections_from_config
-from .coordinator import AptnerDataUpdateCoordinator
+from .coordinator import AptnerDataUpdateCoordinator, NOTICE_OCR_PAYLOAD_KEY
 
 DEVICE_GROUP_NAMES_BY_LANGUAGE: dict[str, dict[str, str]] = {
     "en": {
@@ -654,6 +654,56 @@ def _latest_board_article_attributes(payload: Any) -> dict[str, Any]:
     content = _latest_board_content(payload)
     if content:
         attributes["content"] = content
+    return attributes
+
+
+def _latest_notice_ocr_content(data: dict[str, Any]) -> str | None:
+    payload = data.get(NOTICE_OCR_PAYLOAD_KEY)
+    if not isinstance(payload, dict):
+        return None
+    content = payload.get("content")
+    if not isinstance(content, str) or not content:
+        return None
+
+    stored_article_id = payload.get("article_id")
+    latest_article_id = _latest_board_article_id(data.get("board_notice"))
+    if stored_article_id is None:
+        return content
+    if latest_article_id is None or str(stored_article_id) != str(latest_article_id):
+        return None
+    return content
+
+
+def _is_missing_notice_content(value: str | None) -> bool:
+    if value is None:
+        return True
+    normalized = re.sub(r"\s+", "", value).lower()
+    return normalized in {"", "unknown", "unavailable", "알수없음"}
+
+
+def _latest_notice_content(data: dict[str, Any]) -> str | None:
+    content = _latest_board_content(data.get("board_notice"))
+    if not _is_missing_notice_content(content):
+        return content
+    return _latest_notice_ocr_content(data)
+
+
+def _latest_notice_article_attributes(data: dict[str, Any]) -> dict[str, Any]:
+    attributes = _latest_board_article_attributes(data.get("board_notice"))
+    if not _is_missing_notice_content(_latest_board_content(data.get("board_notice"))):
+        return attributes
+
+    ocr_content = _latest_notice_ocr_content(data)
+    if not ocr_content:
+        return attributes
+
+    attributes["content"] = ocr_content
+    attributes["content_source"] = "ocr"
+    payload = data.get(NOTICE_OCR_PAYLOAD_KEY)
+    if isinstance(payload, dict):
+        updated_at = payload.get("updated_at")
+        if isinstance(updated_at, str):
+            attributes["ocr_updated_at"] = updated_at
     return attributes
 
 
@@ -1673,8 +1723,8 @@ SENSORS: tuple[AptnerSensorDescription, ...] = (
         key="latest_notice_content",
         name="Latest Notice Content",
         icon="mdi:text-long",
-        value_fn=lambda data: _short_text_state(_latest_board_content(data.get("board_notice"))),
-        attributes_fn=lambda data: _latest_board_article_attributes(data.get("board_notice")),
+        value_fn=lambda data: _short_text_state(_latest_notice_content(data)),
+        attributes_fn=_latest_notice_article_attributes,
     ),
     AptnerSensorDescription(
         key="queued_notice_title",

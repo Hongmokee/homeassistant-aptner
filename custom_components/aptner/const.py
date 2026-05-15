@@ -52,6 +52,7 @@ SERVICE_SUBMIT_SURVEY = "submit_survey"
 SERVICE_SUBMIT_VOTE = "submit_vote"
 SERVICE_REGISTER_VISIT_VEHICLE = "register_visit_vehicle"
 SERVICE_CANCEL_VISIT_VEHICLE = "cancel_visit_vehicle"
+SERVICE_SET_NOTICE_OCR_CONTENT = "set_notice_ocr_content"
 
 
 def normalize_enabled_sections(value: object) -> tuple[str, ...]:

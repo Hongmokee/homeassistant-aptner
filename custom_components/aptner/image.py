@@ -74,7 +74,7 @@ IMAGES: tuple[AptnerImageDescription, ...] = (
     ),
     AptnerImageDescription(
         key="queued_notice_image",
-        name="Queued Notice Image",
+        name="지연중계 공지 이미지",
         payload_key="notice_replay",
         suggested_object_id="queued_notice_image",
     ),

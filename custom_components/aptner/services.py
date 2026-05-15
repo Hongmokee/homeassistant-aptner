@@ -16,6 +16,7 @@ from .const import (
     SERVICE_CANCEL_VISIT_VEHICLE,
     SERVICE_REFRESH,
     SERVICE_REGISTER_VISIT_VEHICLE,
+    SERVICE_SET_NOTICE_OCR_CONTENT,
     SERVICE_SUBMIT_SURVEY,
     SERVICE_SUBMIT_VOTE,
 )
@@ -30,6 +31,7 @@ MAX_VISITOR_PHONE_LENGTH = 20
 MAX_VISIT_PURPOSE_LENGTH = 100
 MAX_VISIT_RESERVE_IDX_LENGTH = 32
 MAX_SURVEY_ANSWERS = 50
+MAX_NOTICE_OCR_CONTENT_LENGTH = 1000
 
 POSITIVE_INT = vol.All(vol.Coerce(int), vol.Range(min=1))
 PHONE_PATTERN = re.compile(r"^\+?[0-9][0-9 -]{6,18}[0-9]$")
@@ -127,6 +129,20 @@ def _visit_reserve_idx(value: Any) -> str:
     return text
 
 
+def _notice_ocr_content(value: Any) -> str:
+    text = _bounded_string(
+        value,
+        field="content",
+        max_length=MAX_NOTICE_OCR_CONTENT_LENGTH,
+        min_length=0,
+    )
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _article_id(value: Any) -> str:
+    return _bounded_string(value, field="article_id", max_length=128)
+
+
 SERVICE_BASE_SCHEMA = vol.Schema({vol.Optional(ATTR_ENTRY_ID): _entry_id})
 
 SERVICE_REFRESH_SCHEMA = SERVICE_BASE_SCHEMA
@@ -168,6 +184,13 @@ SERVICE_REGISTER_VISIT_VEHICLE_SCHEMA = SERVICE_BASE_SCHEMA.extend(
 SERVICE_CANCEL_VISIT_VEHICLE_SCHEMA = SERVICE_BASE_SCHEMA.extend(
     {
         vol.Required("visit_reserve_idx"): _visit_reserve_idx,
+    }
+)
+
+SERVICE_SET_NOTICE_OCR_CONTENT_SCHEMA = SERVICE_BASE_SCHEMA.extend(
+    {
+        vol.Required("content"): _notice_ocr_content,
+        vol.Optional("article_id"): _article_id,
     }
 )
 
@@ -239,6 +262,13 @@ async def async_register_services(hass: HomeAssistant) -> None:
         )
         await coordinator.async_request_refresh()
 
+    async def handle_set_notice_ocr_content(call: ServiceCall) -> None:
+        coordinator = _get_coordinator(hass, call.data.get(ATTR_ENTRY_ID))
+        await coordinator.async_set_notice_ocr_content(
+            call.data["content"],
+            article_id=call.data.get("article_id"),
+        )
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_REFRESH,
@@ -269,6 +299,12 @@ async def async_register_services(hass: HomeAssistant) -> None:
         handle_cancel_visit_vehicle,
         schema=SERVICE_CANCEL_VISIT_VEHICLE_SCHEMA,
     )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SET_NOTICE_OCR_CONTENT,
+        handle_set_notice_ocr_content,
+        schema=SERVICE_SET_NOTICE_OCR_CONTENT_SCHEMA,
+    )
     domain_data["services_registered"] = True
 
 
@@ -286,6 +322,7 @@ async def async_unregister_services(hass: HomeAssistant) -> None:
         SERVICE_SUBMIT_SURVEY,
         SERVICE_REGISTER_VISIT_VEHICLE,
         SERVICE_CANCEL_VISIT_VEHICLE,
+        SERVICE_SET_NOTICE_OCR_CONTENT,
     ):
         hass.services.async_remove(DOMAIN, service)
     domain_data["services_registered"] = False
