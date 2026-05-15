@@ -16,6 +16,7 @@ from .const import (
     SERVICE_CANCEL_VISIT_VEHICLE,
     SERVICE_REFRESH,
     SERVICE_REGISTER_VISIT_VEHICLE,
+    SERVICE_SET_QUEUED_NOTICE_OCR_CONTENT,
     SERVICE_SET_NOTICE_OCR_CONTENT,
     SERVICE_SUBMIT_SURVEY,
     SERVICE_SUBMIT_VOTE,
@@ -194,6 +195,13 @@ SERVICE_SET_NOTICE_OCR_CONTENT_SCHEMA = SERVICE_BASE_SCHEMA.extend(
     }
 )
 
+SERVICE_SET_QUEUED_NOTICE_OCR_CONTENT_SCHEMA = SERVICE_BASE_SCHEMA.extend(
+    {
+        vol.Required("content"): _notice_ocr_content,
+        vol.Optional("article_id"): _article_id,
+    }
+)
+
 
 def _get_coordinator(hass: HomeAssistant, entry_id: str | None):
     entries = hass.data.get(DOMAIN, {}).get("entries", {})
@@ -269,6 +277,13 @@ async def async_register_services(hass: HomeAssistant) -> None:
             article_id=call.data.get("article_id"),
         )
 
+    async def handle_set_queued_notice_ocr_content(call: ServiceCall) -> None:
+        coordinator = _get_coordinator(hass, call.data.get(ATTR_ENTRY_ID))
+        await coordinator.async_set_queued_notice_ocr_content(
+            call.data["content"],
+            article_id=call.data.get("article_id"),
+        )
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_REFRESH,
@@ -305,6 +320,12 @@ async def async_register_services(hass: HomeAssistant) -> None:
         handle_set_notice_ocr_content,
         schema=SERVICE_SET_NOTICE_OCR_CONTENT_SCHEMA,
     )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SET_QUEUED_NOTICE_OCR_CONTENT,
+        handle_set_queued_notice_ocr_content,
+        schema=SERVICE_SET_QUEUED_NOTICE_OCR_CONTENT_SCHEMA,
+    )
     domain_data["services_registered"] = True
 
 
@@ -323,6 +344,7 @@ async def async_unregister_services(hass: HomeAssistant) -> None:
         SERVICE_REGISTER_VISIT_VEHICLE,
         SERVICE_CANCEL_VISIT_VEHICLE,
         SERVICE_SET_NOTICE_OCR_CONTENT,
+        SERVICE_SET_QUEUED_NOTICE_OCR_CONTENT,
     ):
         hass.services.async_remove(DOMAIN, service)
     domain_data["services_registered"] = False

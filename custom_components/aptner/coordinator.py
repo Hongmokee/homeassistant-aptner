@@ -21,6 +21,7 @@ NOTICE_BOARD_GROUP = "notice"
 NOTICE_BOARD_PAYLOAD_KEY = "board_notice"
 NOTICE_REPLAY_PAYLOAD_KEY = "notice_replay"
 NOTICE_OCR_PAYLOAD_KEY = "notice_ocr"
+QUEUED_NOTICE_OCR_PAYLOAD_KEY = "queued_notice_ocr"
 NOTICE_REPLAY_DELAY = timedelta(minutes=2)
 NOTICE_REPLAY_STORAGE_KEY = f"{DOMAIN}_notice_replay"
 NOTICE_REPLAY_STORAGE_VERSION = 1
@@ -56,6 +57,7 @@ class AptnerDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._notice_replay_active: dict[str, Any] | None = None
         self._notice_replay_task: asyncio.Task[None] | None = None
         self._latest_notice_ocr: dict[str, Any] | None = None
+        self._queued_notice_ocr: dict[str, Any] | None = None
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
@@ -69,6 +71,7 @@ class AptnerDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.warning("Failed to queue new Aptner notices: %s", err)
         data[NOTICE_REPLAY_PAYLOAD_KEY] = self._notice_replay_payload()
         data[NOTICE_OCR_PAYLOAD_KEY] = self._notice_ocr_payload()
+        data[QUEUED_NOTICE_OCR_PAYLOAD_KEY] = self._queued_notice_ocr_payload()
         return data
 
     def async_shutdown(self) -> None:
@@ -178,6 +181,19 @@ class AptnerDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         "article_id": _string_or_none(notice_ocr.get("article_id")),
                         "updated_at": _string_or_none(notice_ocr.get("updated_at")),
                     }
+            queued_notice_ocr = stored.get("queued_notice_ocr")
+            if isinstance(queued_notice_ocr, dict):
+                content = _string_or_none(queued_notice_ocr.get("content"))
+                if content is not None:
+                    self._queued_notice_ocr = {
+                        "content": content,
+                        "article_id": _string_or_none(
+                            queued_notice_ocr.get("article_id")
+                        ),
+                        "updated_at": _string_or_none(
+                            queued_notice_ocr.get("updated_at")
+                        ),
+                    }
         self._notice_replay_state_loaded = True
 
     async def _async_save_notice_replay_state(self) -> None:
@@ -185,6 +201,7 @@ class AptnerDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             {
                 "last_seen_notice_article_id": self._last_seen_notice_article_id,
                 "latest_notice_ocr": self._latest_notice_ocr,
+                "queued_notice_ocr": self._queued_notice_ocr,
             }
         )
 
@@ -250,6 +267,7 @@ class AptnerDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         data = dict(self.data)
         data[NOTICE_REPLAY_PAYLOAD_KEY] = self._notice_replay_payload()
         data[NOTICE_OCR_PAYLOAD_KEY] = self._notice_ocr_payload()
+        data[QUEUED_NOTICE_OCR_PAYLOAD_KEY] = self._queued_notice_ocr_payload()
         self.async_set_updated_data(data)
 
     async def async_set_notice_ocr_content(
@@ -272,6 +290,28 @@ class AptnerDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
         data = dict(self.data)
         data[NOTICE_OCR_PAYLOAD_KEY] = self._notice_ocr_payload()
+        self.async_set_updated_data(data)
+
+    async def async_set_queued_notice_ocr_content(
+        self,
+        content: str,
+        *,
+        article_id: str | None = None,
+    ) -> None:
+        """Store OCR content for the currently replayed notice."""
+        await self._async_load_notice_replay_state()
+        if article_id is None:
+            article_id = _queued_notice_article_id(self.data)
+        self._queued_notice_ocr = {
+            "content": content,
+            "article_id": article_id,
+            "updated_at": _utcnow_iso(),
+        }
+        await self._async_save_notice_replay_state()
+        if self.data is None:
+            return
+        data = dict(self.data)
+        data[QUEUED_NOTICE_OCR_PAYLOAD_KEY] = self._queued_notice_ocr_payload()
         self.async_set_updated_data(data)
 
     def _notice_replay_payload(self) -> dict[str, Any]:
@@ -300,6 +340,11 @@ class AptnerDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return {}
         return dict(self._latest_notice_ocr)
 
+    def _queued_notice_ocr_payload(self) -> dict[str, Any]:
+        if self._queued_notice_ocr is None:
+            return {}
+        return dict(self._queued_notice_ocr)
+
 
 def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -323,6 +368,15 @@ def _latest_notice_article_id(data: dict[str, Any] | None) -> str | None:
     if detail is None:
         return None
     return _string_or_none(_board_article_id(detail))
+
+
+def _queued_notice_article_id(data: dict[str, Any] | None) -> str | None:
+    if not isinstance(data, dict):
+        return None
+    replay_payload = data.get(NOTICE_REPLAY_PAYLOAD_KEY)
+    if not isinstance(replay_payload, dict):
+        return None
+    return _string_or_none(replay_payload.get("article_id"))
 
 
 def _board_list_payload(payload: Any) -> dict[str, Any]:

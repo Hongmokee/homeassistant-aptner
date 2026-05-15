@@ -20,7 +20,11 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, SECTION_BILLING, enabled_sections_from_config
-from .coordinator import AptnerDataUpdateCoordinator, NOTICE_OCR_PAYLOAD_KEY
+from .coordinator import (
+    AptnerDataUpdateCoordinator,
+    NOTICE_OCR_PAYLOAD_KEY,
+    QUEUED_NOTICE_OCR_PAYLOAD_KEY,
+)
 
 DEVICE_GROUP_NAMES_BY_LANGUAGE: dict[str, dict[str, str]] = {
     "en": {
@@ -674,6 +678,23 @@ def _latest_notice_ocr_content(data: dict[str, Any]) -> str | None:
     return content
 
 
+def _queued_notice_ocr_content(data: dict[str, Any]) -> str | None:
+    payload = data.get(QUEUED_NOTICE_OCR_PAYLOAD_KEY)
+    if not isinstance(payload, dict):
+        return None
+    content = payload.get("content")
+    if not isinstance(content, str) or not content:
+        return None
+
+    stored_article_id = payload.get("article_id")
+    queued_article_id = _queued_notice_article_id(data.get("notice_replay"))
+    if stored_article_id is None:
+        return content
+    if queued_article_id is None or str(stored_article_id) != str(queued_article_id):
+        return None
+    return content
+
+
 def _is_missing_notice_content(value: str | None) -> bool:
     if value is None:
         return True
@@ -731,6 +752,13 @@ def _queued_notice_content(payload: Any) -> str | None:
     return _latest_board_content(_queued_notice_board_payload(payload))
 
 
+def _queued_notice_content_with_ocr(data: dict[str, Any]) -> str | None:
+    content = _queued_notice_content(data.get("notice_replay"))
+    if not _is_missing_notice_content(content):
+        return content
+    return _queued_notice_ocr_content(data)
+
+
 def _queued_notice_remaining(payload: Any) -> int | None:
     if not isinstance(payload, dict):
         return None
@@ -750,6 +778,25 @@ def _queued_notice_article_attributes(payload: Any) -> dict[str, Any]:
     image_urls = _latest_board_image_urls(_queued_notice_board_payload(payload))
     if image_urls:
         attributes["image_urls"] = image_urls
+    return attributes
+
+
+def _queued_notice_article_attributes_with_ocr(data: dict[str, Any]) -> dict[str, Any]:
+    attributes = _queued_notice_article_attributes(data.get("notice_replay"))
+    if not _is_missing_notice_content(_queued_notice_content(data.get("notice_replay"))):
+        return attributes
+
+    ocr_content = _queued_notice_ocr_content(data)
+    if not ocr_content:
+        return attributes
+
+    attributes["content"] = ocr_content
+    attributes["content_source"] = "ocr"
+    payload = data.get(QUEUED_NOTICE_OCR_PAYLOAD_KEY)
+    if isinstance(payload, dict):
+        updated_at = payload.get("updated_at")
+        if isinstance(updated_at, str):
+            attributes["ocr_updated_at"] = updated_at
     return attributes
 
 
@@ -1743,12 +1790,8 @@ SENSORS: tuple[AptnerSensorDescription, ...] = (
         key="queued_notice_content",
         name="Queued Notice Content",
         icon="mdi:text-long",
-        value_fn=lambda data: _short_text_state(
-            _queued_notice_content(data.get("notice_replay"))
-        ),
-        attributes_fn=lambda data: _queued_notice_article_attributes(
-            data.get("notice_replay")
-        ),
+        value_fn=lambda data: _short_text_state(_queued_notice_content_with_ocr(data)),
+        attributes_fn=_queued_notice_article_attributes_with_ocr,
     ),
     AptnerSensorDescription(
         key="queued_notice_remaining",
