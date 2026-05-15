@@ -121,6 +121,14 @@ def _content_type_for_image(image: bytes, fallback: str) -> str | None:
     )
 
 
+def _image_content_type_or_default(image: bytes | None, fallback: str | None) -> str:
+    if image is not None:
+        content_type = _content_type_for_image(image, fallback or "image/jpeg")
+        if content_type is not None:
+            return content_type
+    return _normalize_image_content_type(fallback) or "image/jpeg"
+
+
 def _board_payload_for_image(payload: object) -> object:
     if isinstance(payload, dict):
         active = payload.get("active")
@@ -184,7 +192,12 @@ class AptnerImage(CoordinatorEntity[AptnerDataUpdateCoordinator], ImageEntity):
 
     @property
     def content_type(self) -> str:
-        return self._attr_content_type
+        content_type = _image_content_type_or_default(
+            self._image,
+            self._attr_content_type,
+        )
+        self._attr_content_type = content_type
+        return content_type
 
     @property
     def image_last_updated(self) -> datetime | None:
@@ -200,6 +213,10 @@ class AptnerImage(CoordinatorEntity[AptnerDataUpdateCoordinator], ImageEntity):
         if image_url != self._image_url:
             self._set_image_url(image_url)
         if self._image is not None:
+            self._attr_content_type = _image_content_type_or_default(
+                self._image,
+                self._attr_content_type,
+            )
             return self._image
 
         fallback_content_type = _content_type_from_url(image_url)
@@ -300,6 +317,7 @@ class AptnerImage(CoordinatorEntity[AptnerDataUpdateCoordinator], ImageEntity):
             attributes["article_title"] = title
         if self._image_url:
             attributes["image_url"] = self._image_url
+            attributes["content_type"] = self.content_type
         if image_urls:
             attributes["image_urls"] = image_urls
         self._attr_extra_state_attributes = attributes
