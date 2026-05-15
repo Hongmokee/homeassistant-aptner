@@ -42,21 +42,19 @@ IMAGE_CONTENT_TYPES_BY_EXTENSION = {
 class AptnerImageDescription(EntityDescription):
     payload_key: str
     icon: str = "mdi:image"
+    suggested_object_id: str
 
     def __post_init__(self) -> None:
         if self.translation_key is None:
             object.__setattr__(self, "translation_key", self.key)
-        object.__setattr__(self, "name", None)
 
 
 IMAGES: tuple[AptnerImageDescription, ...] = (
     AptnerImageDescription(
         key="latest_notice_image",
+        name="최신 공지 이미지",
         payload_key="board_notice",
-    ),
-    AptnerImageDescription(
-        key="latest_community_image",
-        payload_key="board_community",
+        suggested_object_id="latest_notice_image",
     ),
 )
 
@@ -96,7 +94,7 @@ async def async_setup_entry(
 class AptnerImage(CoordinatorEntity[AptnerDataUpdateCoordinator], ImageEntity):
     """Representation of an Aptner board image."""
 
-    _attr_has_entity_name = True
+    _attr_has_entity_name = False
     _attr_should_poll = False
 
     def __init__(
@@ -111,9 +109,10 @@ class AptnerImage(CoordinatorEntity[AptnerDataUpdateCoordinator], ImageEntity):
         self._entry = entry
         self._session = async_get_clientsession(coordinator.hass)
         self._attr_icon = description.icon
-        self._attr_name = None
+        self._attr_name = description.name
+        self._attr_suggested_object_id = description.suggested_object_id
         self._attr_translation_key = description.key
-        self._attr_unique_id = f"{entry.entry_id}_{description.key}_image"
+        self._attr_unique_id = f"{entry.entry_id}_{description.key}"
         self._image_url = self._current_image_url()
         self._image: bytes | None = None
         self._attr_content_type = _content_type_from_url(self._image_url)

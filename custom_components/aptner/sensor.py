@@ -202,7 +202,6 @@ COMMUNITY_KEYS = {
     "community_count",
     "latest_community_title",
     "latest_community_content",
-    "latest_community_image",
     "complaint_count",
     "latest_complaint_title",
     "latest_complaint_status",
